@@ -1,0 +1,35 @@
+# Environment — never commit real credentials
+.env
+
+# ChromaDB local storage
+chroma_db/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temp / test artifacts
+*.tmp
+*.bak
