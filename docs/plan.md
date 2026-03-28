@@ -204,6 +204,8 @@ All embedding vectors are L2-normalised before storage. For normalised vectors, 
 equals 1 minus dot product, making cosine and inner-product distance equivalent. ChromaDB's
 `hnsw:space=cosine` is set explicitly for correctness.
 
+Embeddings produced by models can have varying lengths. If you don't normalize, a long vector (representing a long document) might appear "closer" to a query than a short, highly relevant vector simply because of its magnitude, not its meaning. Normalization forces all vectors to lie on the surface of a unit hypersphere, focusing solely on their direction
+
 ### Stage 5: Hybrid Search (`search.py`)
 
 **Problem:** No single retrieval signal is sufficient on its own:
@@ -215,45 +217,101 @@ equals 1 minus dot product, making cosine and inner-product distance equivalent.
 
 ```
 Query
-  |-- BM25 keyword search      -> sparse ranked list  (exact term matching)
-  |-- Vector similarity search -> dense ranked list   (semantic matching)
-  |-- RRF fusion               -> unified ranked list
-       |-- Cross-encoder rerank -> final top-n        (joint query-document scoring)
-            |-- Caption extraction -> top sentence per result
+  |-- Layer 1: BM25 keyword search      -> top-50 sparse ranked list
+  |-- Layer 2: Vector similarity search -> top-50 dense ranked list
+  |-- Layer 3: RRF fusion               -> unified top-20 ranked list
+       |-- Layer 4: Cross-encoder rerank -> final top-n
+                |-- Caption extraction  -> top sentence per result
 ```
 
-**Key decision: Reciprocal Rank Fusion (RRF) over weighted score fusion**
+#### Layer 1: BM25 Keyword Search
 
-BM25 scores are unbounded positive floats; vector cosine similarities are in [-1, 1]. Linear
-combination requires normalisation that is both query-dependent and fragile to outliers. RRF
-avoids this entirely by operating on rank positions:
+BM25 is considered the successor to traditional TF-IDF.
+When a query arrives, it is first tokenised (lowercased, split on non-word characters) and run
+against an in-memory BM25Okapi index. BM25 is a classical term-frequency ranking function that
+scores each chunk based on how often the query terms appear in it, weighted by how rare those
+terms are across the full corpus (inverse document frequency).
+
+BM25 returns the top 50 chunks ranked by score, each assigned a rank position (1 = highest score).
+Only chunks with a score greater than zero are kept; a score of zero means the chunk shares no
+tokens with the query at all and carries no keyword signal.
+
+**What BM25 is good at:** exact matches on product codes, error numbers, proper nouns, and
+technical identifiers where the precise token matters.
+
+**What BM25 misses:** any semantic paraphrase where the words differ. "Device will not start"
+and "unit fails to power on" would score zero against each other despite being synonymous.
+
+#### Layer 2: Vector Similarity Search
+
+In parallel, the query is embedded using the same embedding model that was used at ingest time
+(`text-embedding-3-small` or the local fallback). This produces a 1536-dimensional query vector.
+
+ChromaDB performs an approximate nearest-neighbour search (HNSW index, cosine distance) and
+returns the top 50 chunks whose embedding vectors are closest in direction to the query vector.
+Each result is assigned a rank position (1 = most similar).
+
+**What vector search is good at:** semantic paraphrases, conceptual similarity, and cases where
+the query and the relevant chunk use different vocabulary to express the same idea.
+
+**What vector search misses:** exact keyword precision. A chunk containing the literal string
+"Error 101" may score lower than a semantically related chunk that never mentions "Error 101"
+at all, because the embedding compresses meaning rather than preserving exact tokens.
+
+#### Layer 3: Reciprocal Rank Fusion (RRF)
+
+At this point we have two separate ranked lists of up to 50 chunks each, with some chunks
+appearing in both lists and others in only one. The lists cannot be combined by simply adding
+scores, because BM25 scores are unbounded positive floats while cosine similarities are bounded
+in [-1, 1]. A direct weighted sum would be dominated by whichever signal happened to produce
+larger numbers for a given query.
+
+RRF solves this by discarding the raw scores entirely and combining purely by rank position:
 
 ```
-RRF(d) = sum of  1 / (k + rank_i(d))
+RRF(chunk) = 1 / (60 + bm25_rank)  +  1 / (60 + vector_rank)
 ```
 
-With k=60 (from the original paper), a document ranked 1st contributes 1/61 (approximately 0.0164)
-and a document ranked 20th contributes 1/80 (0.0125). The decay is gentle enough to reward
-consistently good ranks across both signals without any per-query normalisation.
+If a chunk only appeared in one list, only one term contributes. The constant k=60 controls
+how steeply rank position decays in value: a chunk ranked 1st contributes 1/61 (0.0164) and
+a chunk ranked 20th contributes 1/80 (0.0125). The decay is intentionally gentle, so a chunk
+that ranks moderately well in both lists outscores a chunk that ranks 1st in one list but
+appears nowhere in the other.
 
-**Key decision: cross-encoder reranking on top-20 RRF candidates**
+The full merged set is sorted by RRF score descending and the top 20 candidates are forwarded
+to the next layer.
 
-Bi-encoders (the embedding model used for vector search) score queries and documents independently.
-Cross-encoders score (query, document) pairs jointly, reading both at the same time; this produces
-much more accurate relevance signals but is significantly slower.
+#### Layer 4: Cross-Encoder Reranking
 
-Running the cross-encoder on the full corpus is not feasible. Running it on the top-20 RRF
-candidates bounds latency to approximately 50 to 200ms while still correcting ranking errors
-introduced by RRF. The model used is `cross-encoder/ms-marco-MiniLM-L-6-v2`, trained on MS MARCO
-passage ranking, a benchmark directly analogous to this retrieval task.
+Layers 1 and 2 both use bi-encoders: the query and each chunk are encoded independently into
+separate vectors, and similarity is computed by comparing those vectors. Bi-encoders are fast
+because chunk vectors are pre-computed and stored, but they are less accurate because the model
+never sees the query and the chunk together at the same time.
 
-**Key decision: semantic captions via cross-encoder sentence scoring**
+A cross-encoder removes this limitation. It takes the query and a chunk and concatenates them
+into a single input sequence, then reads both together. This allows the model to attend to
+interactions between specific query words and specific chunk words, which produces a much more
+accurate relevance score. The cost is that cross-encoders cannot be pre-indexed; they must run
+at query time for every candidate.
 
-Rather than returning the full 512-token chunk as a snippet, the most relevant sentence is
-extracted by scoring each sentence independently as a (query, sentence) pair with the
-already-loaded cross-encoder. The highest-scoring sentence is returned as the caption. This
-reuses the reranking model at no additional cost and directly mirrors Azure AI Search's
-semantic captions feature.
+The top-20 RRF candidates are passed to `cross-encoder/ms-marco-MiniLM-L-6-v2` as
+(query, chunk_text) pairs. The model returns a relevance score for each pair. The candidates
+are re-sorted by this score, and the top-n are kept as the final results.
+
+Running the cross-encoder on only 20 candidates bounds the added latency to approximately
+50 to 200ms depending on hardware, while still correcting the ranking errors that RRF
+introduces by treating both signals as equally reliable.
+
+#### Caption Extraction
+
+Rather than returning the full 512-token chunk as the result snippet, the single most relevant
+sentence is extracted. Each sentence in the chunk is scored independently as a (query, sentence)
+pair using the already-loaded cross-encoder. The sentence with the highest score is returned
+as the caption.
+
+This reuses the cross-encoder with no additional model load, and directly mirrors the behaviour
+of Azure AI Search's semantic captions feature: the caption shows the reader exactly why a
+chunk was retrieved rather than forcing them to scan the entire chunk text.
 
 **Output:** `SearchResult` dataclass with `rank`, `blob_name`, `text`, `score`, `rrf_score`,
 `bm25_rank`, `vector_rank`, `caption`, and full `metadata`.
@@ -278,8 +336,8 @@ defaults, progress visibility, and operational controls.
 | **Retrieval accuracy** | 4-layer pipeline: BM25 + vector + RRF + cross-encoder reranking |
 | **OCR cost** | Tesseract only runs when PyMuPDF yields fewer than 50 characters per page |
 | **Embedding cost** | Sentence splitter (no embedding calls at ingest) is the default; semantic splitter is opt-in |
-| **Reranker latency** | Cross-encoder runs on top-20 candidates only, not the full corpus |
 | **Score fusion stability** | RRF replaces fragile per-query score normalisation |
+| **Reranker latency** | Cross-encoder runs on top-20 candidates only, not the full corpus |
 | **Context at boundaries** | 50-token overlap prevents boundary-spanning answers from being missed |
 | **Developer experience** | Local embedding fallback means the full pipeline runs with zero paid services |
 | **Idempotency** | Upsert-based indexing with deterministic chunk IDs |
