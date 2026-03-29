@@ -28,7 +28,7 @@ build/
 .idea/
 
 # Logs
-*.log
+logs/*.log
 
 # Temp / test artifacts
 *.tmp

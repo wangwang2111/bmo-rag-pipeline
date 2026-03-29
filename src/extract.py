@@ -37,10 +37,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(_LOG_DIR / "extract.log", mode="a", encoding="utf-8"),
+    ],
 )
 
 # ── Heuristic threshold ───────────────────────────────────────────────────────

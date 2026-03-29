@@ -233,7 +233,7 @@ for r in results:
 - **Table extraction**: PyMuPDF extracts table cells as plain text without structure. For table-heavy documents, consider Azure Document Intelligence.
 - **Multilingual documents**: The pipeline is configured for English. Multi-language support requires setting `lang` in pytesseract and a multilingual embedding model.
 - **BM25 + metadata filter mismatch**: BM25 searches the entire corpus; vector search respects the `filter_metadata` parameter. When a metadata filter is active, BM25 candidates from outside the filter may appear in RRF fusion. A production system would push BM25 inside the metadata-partitioned space.
-- **BM25 text/metadata lookups**: Originally O(n) `list.index()` scans (~800k string comparisons per query at 20k chunks). Fixed by adding a `_id_to_index: dict[str, int]` in `BM25Index` built once at index load time, reducing all lookups to O(1).
+- **BM25 text/metadata lookups**: Originally O(n) `list.index()` scans - which scans the list from the beginning until it finds a match (~800k string comparisons per query at 20k chunks). This has been fixed by adding a `_id_to_index: dict[str, int]` in `BM25Index` built once at index load time, reducing all lookups to O(1).
 - **Reranker latency**: The cross-encoder adds ~50-200ms per query depending on hardware. For latency-sensitive applications, use Cohere Rerank API instead.
 
 ## Development

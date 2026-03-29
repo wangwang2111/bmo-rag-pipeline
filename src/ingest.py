@@ -31,6 +31,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -51,10 +52,17 @@ from index import (
 
 load_dotenv()
 
+_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(_LOG_DIR / "ingest.log", mode="a", encoding="utf-8"),
+    ],
 )
 
 
