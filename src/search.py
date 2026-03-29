@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -462,12 +463,17 @@ class HybridSearchEngine:
         self._ensure_ready()
 
         logger.info("Hybrid search: query='%s', top_n=%d", query, n)
+        t_total = time.perf_counter()
 
         # ── Step 1: Query embedding ───────────────────────────────────────────
+        t0 = time.perf_counter()
         query_vec = get_query_embedding(query, embedder=self._embedder)
+        t_embed = (time.perf_counter() - t0) * 1000
 
         # ── Step 2: BM25 keyword search ───────────────────────────────────────
+        t0 = time.perf_counter()
         bm25_hits = self._bm25_index.query(query, top_k=BM25_CANDIDATES)
+        t_bm25 = (time.perf_counter() - t0) * 1000
         logger.debug("BM25 returned %d hits.", len(bm25_hits))
 
         # ── Step 3: Vector similarity search ─────────────────────────────────
@@ -479,7 +485,9 @@ class HybridSearchEngine:
         if filter_metadata:
             chroma_kwargs["where"] = filter_metadata
 
+        t0 = time.perf_counter()
         vec_response = self._collection.query(**chroma_kwargs)
+        t_vector = (time.perf_counter() - t0) * 1000
 
         # Convert ChromaDB distances (cosine distance) to ranks
         vec_ids = vec_response["ids"][0]
@@ -514,7 +522,9 @@ class HybridSearchEngine:
         logger.debug("Vector search returned %d hits.", len(vector_hits))
 
         # ── Step 4: RRF fusion ────────────────────────────────────────────────
+        t0 = time.perf_counter()
         fused = reciprocal_rank_fusion(bm25_hits, vector_hits)
+        t_rrf = (time.perf_counter() - t0) * 1000
         logger.debug("RRF fusion produced %d unique candidates.", len(fused))
 
         # Take top candidates for reranking
@@ -526,7 +536,9 @@ class HybridSearchEngine:
             for cid, _, _, _ in top_candidates
             if cid in id_to_text
         ]
+        t0 = time.perf_counter()
         reranked = self._reranker.rerank(query, rerank_input)
+        t_rerank = (time.perf_counter() - t0) * 1000
         logger.debug("Reranker scored %d candidates.", len(reranked))
 
         # Build a score lookup for RRF scores
@@ -535,6 +547,7 @@ class HybridSearchEngine:
         vec_rank_lookup = {cid: vr for cid, _, _, vr in fused}
 
         # ── Step 6: Assemble results with captions ────────────────────────────
+        t0 = time.perf_counter()
         results: list[SearchResult] = []
         for rank_pos, (chunk_id, rerank_score) in enumerate(reranked[:n], start=1):
             text = id_to_text.get(chunk_id, "")
@@ -555,8 +568,15 @@ class HybridSearchEngine:
                     metadata=meta,
                 )
             )
+        t_captions = (time.perf_counter() - t0) * 1000
 
-        logger.info("Returning %d search results.", len(results))
+        t_total_ms = (time.perf_counter() - t_total) * 1000
+        logger.info(
+            "Latency (ms) — embed: %.1f | bm25: %.1f | vector: %.1f | "
+            "rrf: %.1f | rerank: %.1f | captions: %.1f | total: %.1f",
+            t_embed, t_bm25, t_vector, t_rrf, t_rerank, t_captions, t_total_ms,
+        )
+
         return results
 
 
