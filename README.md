@@ -74,7 +74,7 @@ bmo_1st_project/
 └── requirements.txt   # Pinned dependencies
 ```
 
-> **Sample data**: `sample_data/` contains synthetic documents that mirror the expected Azure Blob Storage container layout (`manuals/`, `troubleshooting/`, `policies/`). These files have been uploaded to an Azure Storage container and the full pipeline has been tested end-to-end against that container. To use your own documents, upload them to your container in the same folder structure and point `AZURE_STORAGE_CONTAINER_NAME` at it.
+> **Sample data**: `sample_data/` contains synthetic documents that mirror the expected container layout (`manuals/`, `troubleshooting/`, `policies/`). These files were uploaded to an **Azure Data Lake Storage Gen2** container and the full pipeline was tested end-to-end against it. ADLS Gen2 is fully compatible with the `azure-storage-blob` SDK used here — the same connection string, `BlobServiceClient`, and `list_blobs()` / `download_blob()` calls work identically against both ADLS Gen2 and standard Blob Storage. To use your own documents, upload them to your container in the same folder structure and point `AZURE_STORAGE_CONTAINER_NAME` at it.
 
 ## Setup
 
