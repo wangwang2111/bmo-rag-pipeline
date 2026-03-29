@@ -30,11 +30,12 @@ the final ranking.
 
 Semantic captions
 -----------------
-We extract the single most relevant sentence from each result chunk using a
-simple sliding-window approach: each sentence is scored independently by the
-cross-encoder (query, sentence) and the highest-scoring sentence is returned
-as the caption.  This is analogous to Azure Cognitive Search's "semantic
-captions" feature.
+We extract the single most relevant sentence from each result chunk using
+lightweight token-overlap scoring: each sentence is scored by the fraction
+of query terms it contains, with a small length bonus to prefer informative
+sentences over short fragments.  No model inference is needed — this keeps
+caption extraction O(n_sentences) and adds <1ms to query latency.  This is
+analogous to Azure Cognitive Search's "semantic captions" feature.
 
 Public interface
 ----------------
@@ -338,9 +339,10 @@ def extract_caption(
     """
     Extract the most relevant sentence from a chunk as a semantic caption.
 
-    We split the chunk into sentences and score each (query, sentence) pair
-    with the cross-encoder.  The highest-scoring sentence becomes the caption,
-    truncated to ``max_caption_chars`` if needed.
+    Uses lightweight token-overlap scoring (query term coverage * sentence
+    length bonus) rather than the cross-encoder, keeping caption extraction
+    O(n_sentences) with no model inference cost.  Captions are display-only
+    and do not affect ranking, so the cheaper method is sufficient.
 
     Parameters
     ----------
@@ -349,7 +351,7 @@ def extract_caption(
     chunk_text:
         The full chunk text.
     reranker:
-        An initialised ``CrossEncoderReranker``.
+        Accepted for API compatibility but not used.
     max_caption_chars:
         Maximum character length for the returned caption.
 
@@ -357,7 +359,6 @@ def extract_caption(
     -------
     The most relevant sentence (string).
     """
-    # Simple sentence splitter: split on ". ", "? ", "! " followed by uppercase
     sentences = re.split(r"(?<=[.?!])\s+", chunk_text.strip())
     sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
 
@@ -367,12 +368,25 @@ def extract_caption(
     if len(sentences) == 1:
         return sentences[0][:max_caption_chars]
 
-    # Score each sentence — batch predict for efficiency
-    pairs = [(query, s) for s in sentences]
-    scores = reranker._model.predict(pairs)
-    best_idx = int(scores.argmax())
-    caption = sentences[best_idx]
-    return caption[:max_caption_chars]
+    # Tokenise query into a set of lowercase terms
+    query_terms = set(re.split(r"\W+", query.lower())) - {"", "the", "a", "an", "of", "to", "in", "for", "and", "or", "is", "are", "what", "how"}
+
+    best_sentence = sentences[0]
+    best_score = -1.0
+
+    for sentence in sentences:
+        s_tokens = re.split(r"\W+", sentence.lower())
+        s_set = set(s_tokens)
+        # Coverage: fraction of query terms present in the sentence
+        coverage = len(query_terms & s_set) / len(query_terms) if query_terms else 0.0
+        # Length bonus: prefer longer sentences (log-scaled) to avoid trivial matches
+        length_bonus = min(len(sentence) / 200.0, 1.0)
+        score = coverage + 0.1 * length_bonus
+        if score > best_score:
+            best_score = score
+            best_sentence = sentence
+
+    return best_sentence[:max_caption_chars]
 
 
 # ── Main search engine ────────────────────────────────────────────────────────
@@ -404,6 +418,8 @@ class HybridSearchEngine:
         self._bm25_index: Optional[BM25Index] = None
         self._embedder = None
         self._reranker: Optional[CrossEncoderReranker] = None
+        self.last_latency_ms: dict[str, float] = {}
+        """Per-stage latency (ms) from the most recent search() call."""
 
     def _ensure_ready(self) -> None:
         """Lazily initialise all components on first use."""
@@ -576,6 +592,15 @@ class HybridSearchEngine:
             "rrf: %.1f | rerank: %.1f | captions: %.1f | total: %.1f",
             t_embed, t_bm25, t_vector, t_rrf, t_rerank, t_captions, t_total_ms,
         )
+        self.last_latency_ms = {
+            "embed":    round(t_embed, 1),
+            "bm25":     round(t_bm25, 1),
+            "vector":   round(t_vector, 1),
+            "rrf":      round(t_rrf, 1),
+            "rerank":   round(t_rerank, 1),
+            "captions": round(t_captions, 1),
+            "total":    round(t_total_ms, 1),
+        }
 
         return results
 

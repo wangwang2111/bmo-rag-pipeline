@@ -1,0 +1,241 @@
+CYBER SECURITY INCIDENT RESPONSE POLICY
+BMO Financial Group — Security Operations Centre (SOC)
+Document ID: POL-IRP-007
+Version: 3.0
+Effective Date: 2025-03-01
+Review Date: 2026-03-01
+Owner: Chief Information Security Officer (CISO)
+Classification: Internal Use Only
+
+================================================================================
+1. PURPOSE
+================================================================================
+
+This policy defines BMO's approach to detecting, containing, eradicating, and
+recovering from cyber security incidents. It establishes roles and escalation
+paths to minimise the impact of incidents on BMO's customers, operations, and
+reputation.
+
+All employees are required to report suspected security incidents immediately.
+Failure to report is itself a policy violation.
+
+================================================================================
+2. SCOPE
+================================================================================
+
+This policy applies to all BMO information systems, networks, cloud environments,
+third-party-managed services, and endpoints accessing BMO resources, regardless
+of geography.
+
+================================================================================
+3. INCIDENT CLASSIFICATION
+================================================================================
+
+BMO classifies security incidents by severity:
+
+  P1 — CRITICAL
+  Definition: Active breach with confirmed data exfiltration or ransomware
+              encryption; systemic failure of a Tier 1 application; incidents
+              meeting OSFI Technology and Cyber Risk Guideline reporting thresholds.
+  Response SLA: Incident Commander engaged within 15 minutes.
+  Notification: CISO, CEO, Board Risk Committee, OSFI (within 24 hours if
+                material); Canadian Centre for Cyber Security (CCCS).
+
+  P2 — HIGH
+  Definition: Suspected breach under active investigation; partial compromise of
+              a Tier 1 system; successful phishing attack with credential theft.
+  Response SLA: SOC lead engaged within 1 hour.
+  Notification: CISO, relevant business unit VP; OSFI notification evaluated.
+
+  P3 — MEDIUM
+  Definition: Malware detection contained to a single endpoint; policy violation
+              with no data loss; failed intrusion attempt with indicators of
+              compromise (IOCs) identified.
+  Response SLA: SOC analyst assigned within 4 hours.
+  Notification: Information Security Manager; business unit ISSO.
+
+  P4 — LOW
+  Definition: Single failed phishing attempt with no credential compromise;
+              anomalous access detected and explained; minor policy violation.
+  Response SLA: Logged and reviewed within 2 business days.
+  Notification: Recorded in SIEM; no immediate escalation required.
+
+================================================================================
+4. INCIDENT RESPONSE PHASES
+================================================================================
+
+4.1 DETECTION AND REPORTING
+
+Any employee who observes unusual system behaviour, receives a suspicious
+communication, or suspects a security incident must:
+
+  1. Do NOT attempt to investigate or remediate the incident independently.
+  2. Preserve evidence — do not power off affected devices unless instructed.
+  3. Report immediately via one of:
+     - SOC Hotline:       1-800-BMO-SOCC (24x7)
+     - Email:             soc@bmo.com (monitored 24x7; PGP key available)
+     - ServiceNow Portal: https://bmo.service-now.com > Security Incident
+     - Slack:             #security-incidents (monitored by SOC)
+
+4.2 TRIAGE AND CLASSIFICATION
+
+Upon receiving a report, the SOC Tier 1 analyst will:
+
+  - Assign a case number and record in the SIEM (Splunk)
+  - Classify incident severity (P1–P4) within 30 minutes
+  - Engage the Incident Commander for P1/P2 incidents
+  - Begin initial log collection and IOC extraction
+
+4.3 CONTAINMENT
+
+Containment actions depend on severity and system type. Approved containment
+actions include:
+
+  Network isolation:
+    - Block source IPs at perimeter firewall (Palo Alto PAN-OS)
+    - Isolate affected VLAN segments via Cisco ISE quarantine policy
+    - Revoke BGP peering for compromised routing infrastructure
+
+  Endpoint containment:
+    - Isolate endpoint via CrowdStrike Falcon (Real Time Response)
+    - Disable Active Directory account of compromised user
+    - Revoke OAuth tokens and invalidate active sessions in Azure AD
+
+  Cloud containment:
+    - Revoke IAM roles and access keys in Azure / AWS
+    - Enable Storage Account firewall to restrict access
+    - Snapshot affected VMs before any remediation action
+
+  IMPORTANT: Containment actions on production Tier 1 systems (Core Banking,
+  Payments, Trading) require approval from the Incident Commander AND the
+  relevant Business Technology Senior VP before execution.
+
+4.4 ERADICATION
+
+After containment is confirmed, the SOC and Infrastructure teams will:
+
+  - Remove malware, backdoors, and attacker persistence mechanisms
+  - Patch or re-image affected systems using verified clean images
+  - Reset all credentials that were exposed or potentially compromised
+  - Rotate secrets, API keys, and certificates associated with affected services
+  - Validate IOC removal using endpoint detection tools
+
+4.5 RECOVERY
+
+Systems are returned to production only after:
+
+  - Eradication has been independently verified by a second SOC analyst
+  - Vulnerability that allowed initial compromise has been patched/mitigated
+  - Enhanced monitoring has been activated for affected systems (minimum 30 days)
+  - Business owner has signed off on recovery readiness checklist
+
+4.6 POST-INCIDENT REVIEW
+
+A Post-Incident Review (PIR) is mandatory for all P1 and P2 incidents:
+
+  - PIR must be completed within 5 business days of incident closure
+  - PIR report covers: timeline, root cause, detection gaps, response gaps,
+    corrective actions with owners and due dates
+  - P1 PIR reports are reviewed by the Board Risk Committee
+  - Lessons learned are incorporated into the Threat Intelligence feed and
+    tabletop exercise programme
+
+================================================================================
+5. EVIDENCE PRESERVATION
+================================================================================
+
+Digital forensic evidence must be preserved in accordance with the following
+chain-of-custody requirements:
+
+  - Acquire forensic disk images before any remediation on affected systems
+  - Use write-blocking hardware for physical media acquisition
+  - Store forensic images in the BMO Evidence Vault (access: forensics@bmo.com)
+  - Evidence retention: 5 years, or duration of litigation hold if applicable
+  - All evidence handling must be documented in the incident case record
+
+Do not perform live remediation on a system before a forensic image has been
+captured, unless delay would cause additional data loss or system damage.
+
+================================================================================
+6. REGULATORY AND LEGAL NOTIFICATION
+================================================================================
+
+6.1 OSFI NOTIFICATION
+
+Under OSFI Technology and Cyber Risk Guideline (October 2023), BMO must notify
+OSFI within 24 hours of becoming aware of a technology or cyber incident that:
+
+  - Has caused or has the potential to cause material impact to BMO's operations
+  - Involves unauthorised access to or exfiltration of customer data
+  - Affects BMO's ability to meet its financial obligations
+
+The CISO is the designated OSFI notification contact. Notify via:
+  - OSFI Incident Reporting Portal: https://osfi-bsif.gc.ca/incident
+  - OSFI Emergency Line: (613) 990-7788
+
+6.2 PIPEDA / PRIVACY BREACH NOTIFICATION
+
+Where an incident involves a breach of personal information that poses a real
+risk of significant harm, the Privacy Officer must be engaged immediately.
+Notification to the Office of the Privacy Commissioner of Canada (OPC) is
+required as soon as feasible.
+
+Affected individuals must be notified directly if it is reasonable to believe
+the breach creates a real risk of significant harm.
+
+6.3 PAYMENT CARD INDUSTRY (PCI-DSS)
+
+Incidents involving cardholder data environments must follow PCI-DSS Incident
+Response procedures. Engage the PCI QSA team within 1 hour of classification.
+
+================================================================================
+7. ROLES AND RESPONSIBILITIES
+================================================================================
+
+  CISO:               Ultimate accountability for incident response programme;
+                      approves P1 public communications; regulatory notifications.
+
+  Incident Commander: Named on-call SOC lead; coordinates all response activities;
+                      escalation authority for containment decisions.
+
+  SOC Analysts:       24x7 detection, triage, containment, and evidence collection.
+
+  Infrastructure:     Executes network isolation and system recovery actions.
+
+  Legal & Compliance: Advises on regulatory notifications; manages litigation holds.
+
+  Communications:     Manages internal and external communications for P1 incidents;
+                      coordinates with Media Relations for public statements.
+
+  All Employees:      Report suspected incidents; preserve evidence; do not discuss
+                      incident details outside of the response team.
+
+================================================================================
+8. TRAINING AND TESTING
+================================================================================
+
+  - All SOC staff complete incident response training annually
+  - Tabletop exercises conducted quarterly (at minimum one P1-scenario per year)
+  - Penetration testing and red team exercises conducted annually
+  - Phishing simulation programme run monthly for all BMO staff
+
+================================================================================
+9. RELATED POLICIES AND REFERENCES
+================================================================================
+
+  - POL-SEC-001: BMO Information Security Policy
+  - POL-DRT-003: Data Retention and Disposal Policy
+  - POL-BCP-002: Business Continuity and Disaster Recovery Policy
+  - OSFI Technology and Cyber Risk Guideline (October 2023)
+  - NIST SP 800-61 Rev. 2: Computer Security Incident Handling Guide
+  - PCI-DSS v4.0 Requirement 12.10: Incident Response Plan
+
+================================================================================
+10. DOCUMENT HISTORY
+================================================================================
+
+  Version 1.0 — 2020-06-01 — Initial release
+  Version 2.0 — 2022-09-01 — Updated for OSFI Guideline B-13 (superseded)
+  Version 3.0 — 2025-03-01 — Full rewrite for OSFI Technology and Cyber Risk
+                              Guideline (Oct 2023); added cloud containment
+                              procedures; updated regulatory notification thresholds

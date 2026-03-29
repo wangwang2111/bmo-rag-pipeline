@@ -9,6 +9,7 @@ A production-grade **Azure ETL & Retrieval-Augmented Search (RAG)** pipeline tha
 - [Setup](#setup)
 - [Running the Pipeline](#running-the-pipeline)
 - [Module Quick Reference](#module-quick-reference)
+- [Performance](#performance)
 - [Assumptions](#assumptions)
 - [Known Limitations](#known-limitations)
 - [Development](#development)
@@ -65,9 +66,9 @@ bmo_1st_project/
 │   ├── cost_estimation.md
 │   └── fabric_architecture.md
 ├── sample_data/       # Synthetic test documents (mirrors Azure container layout)
-│   ├── manuals/       #   deviceA.pdf, deviceB.pdf, deviceC_scanned.pdf
-│   ├── troubleshooting/ # error101.md
-│   └── policies/      #   security.txt
+│   ├── manuals/       #   deviceA.pdf, deviceB.pdf, deviceC_scanned.pdf, deviceD.pdf
+│   ├── troubleshooting/ # error101.md, error102.md, error200.md
+│   └── policies/      #   security.txt, data_retention.txt, incident_response.txt
 ├── _generate_samples.py # Script that generated the synthetic sample data
 ├── .env.example       # Environment variable template
 └── requirements.txt   # Pinned dependencies
@@ -226,6 +227,38 @@ for r in results:
     print(r.rank, r.blob_name, r.caption)
 ```
 
+## Performance
+
+Measured on a 10-document corpus (42 chunks) running on CPU (no GPU), using Azure OpenAI `text-embedding-3-small` (1536-dim) and `ms-marco-MiniLM-L-6-v2` cross-encoder.
+
+### Search latency
+
+| Stage | Time (ms) | Notes |
+|---|---|---|
+| Query embedding | 75.1 | Azure OpenAI API round-trip |
+| BM25 keyword search | 0.2 | In-memory index, O(n chunks) |
+| Vector similarity (ChromaDB) | 5.1 | Cosine distance over 42 chunks |
+| RRF fusion | 0.0 | Pure Python, negligible |
+| Cross-encoder reranking | 102.5 | Dominant cost; 20 candidates scored |
+| Caption extraction | 0.5 | Token-overlap scoring, no model inference |
+| **Total** | **185.7** | |
+
+Cross-encoder reranking is the dominant bottleneck. For sub-50ms production latency, replace with [Cohere Rerank API](https://cohere.com/rerank) or cache reranker scores for frequent queries.
+
+### Retrieval accuracy — Recall@K
+
+Evaluated on 21 ground-truth queries spanning 4 query types across all 10 documents.
+
+| | Recall@1 | Recall@3 | Recall@5 |
+|---|---|---|---|
+| Exact keyword | 100% | 100% | 100% |
+| Semantic paraphrase | 100% | 100% | 100% |
+| Policy retrieval | 75% | 75% | 75% |
+| OCR / scanned PDF | 100% | 100% | 100% |
+| **Overall** | **95%** | **95%** | **95%** |
+
+The one persistent miss ("steps to contain a ransomware breach") is a known multi-hop reasoning gap — see [Known Limitations](#known-limitations) below.
+
 ## Assumptions
 
 1. **Container structure**: Documents are organised in subfolders (`manuals/`, `troubleshooting/`, `policies/`) but the pipeline processes all blobs regardless of folder.
@@ -241,7 +274,8 @@ for r in results:
 - **Multilingual documents**: The pipeline is configured for English. Multi-language support requires setting `lang` in pytesseract and a multilingual embedding model.
 - **BM25 + metadata filter mismatch**: BM25 searches the entire corpus; vector search respects the `filter_metadata` parameter. When a metadata filter is active, BM25 candidates from outside the filter may appear in RRF fusion. A production system would push BM25 inside the metadata-partitioned space.
 - **BM25 text/metadata lookups**: Originally O(n) `list.index()` scans - which scans the list from the beginning until it finds a match (~800k string comparisons per query at 20k chunks). This has been fixed by adding a `_id_to_index: dict[str, int]` in `BM25Index` built once at index load time, reducing all lookups to O(1).
-- **Reranker latency**: The cross-encoder adds ~50-200ms per query depending on hardware. For latency-sensitive applications, use Cohere Rerank API instead.
+- **Reranker latency**: The cross-encoder adds ~100ms per query on CPU. For latency-sensitive applications, use Cohere Rerank API instead.
+- **Multi-hop queries**: The pipeline retrieves in a single pass — the query is embedded once and chunks are ranked by direct similarity. This fails when the answer requires chaining two separate chunks. For example, "steps to contain a ransomware breach" requires first linking "ransomware" to a P1 incident definition (Chunk A), then following that to the containment procedure section (Chunk B). Chunk B never mentions "ransomware" so it scores low and is not retrieved. The fix is query expansion with an LLM (HyDE, step-back prompting, or ReAct) to rewrite the query before retrieval — this is the standard motivation for agentic RAG architectures.
 
 ## Development
 

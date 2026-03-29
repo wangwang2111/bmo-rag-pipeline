@@ -1,0 +1,215 @@
+DATA RETENTION AND DISPOSAL POLICY
+BMO Financial Group — Information Governance
+Document ID: POL-DRT-003
+Version: 2.1
+Effective Date: 2025-01-01
+Review Date: 2026-01-01
+Owner: Chief Data Officer
+Classification: Internal Use Only
+
+================================================================================
+1. PURPOSE
+================================================================================
+
+This policy establishes the minimum retention periods for BMO data assets, the
+approved methods for secure data disposal, and the responsibilities of data
+custodians in managing data throughout its lifecycle.
+
+Compliance with this policy is mandatory for all BMO employees, contractors,
+and third-party service providers who create, store, process, or dispose of BMO
+data.
+
+================================================================================
+2. SCOPE
+================================================================================
+
+This policy applies to all BMO data regardless of format (structured, semi-
+structured, unstructured) and storage medium (on-premises servers, cloud
+storage, endpoint devices, removable media, paper records).
+
+================================================================================
+3. REGULATORY BASIS
+================================================================================
+
+Retention periods defined in this policy reflect the minimum requirements under:
+
+  - Office of the Superintendent of Financial Institutions (OSFI) Guideline E-21
+  - Personal Information Protection and Electronic Documents Act (PIPEDA)
+  - Financial Transactions and Reports Analysis Centre of Canada (FINTRAC)
+    Proceeds of Crime (Money Laundering) and Terrorist Financing Act
+  - Ontario Electronic Commerce Act, 2000
+  - BMO Group Internal Audit requirements
+
+Where applicable law requires a longer retention period than specified in this
+policy, the legal requirement takes precedence.
+
+================================================================================
+4. RETENTION SCHEDULE
+================================================================================
+
+4.1 CUSTOMER RECORDS
+
+  Customer account records (KYC, account opening, agreements)
+    Retention: 7 years after account closure
+    Disposal: Secure shredding (paper); cryptographic erasure (digital)
+
+  Transaction records (payments, transfers, trade confirmations)
+    Retention: 7 years from transaction date
+    Disposal: Secure shredding (paper); cryptographic erasure (digital)
+
+  Customer complaints and dispute records
+    Retention: 5 years from resolution date
+    Disposal: Secure shredding (paper); cryptographic erasure (digital)
+
+4.2 EMPLOYEE RECORDS
+
+  Payroll and compensation records
+    Retention: 7 years after employment termination
+    Disposal: Secure shredding (paper); cryptographic erasure (digital)
+
+  Performance reviews and disciplinary records
+    Retention: 5 years after employment termination
+    Disposal: Secure shredding (paper); cryptographic erasure (digital)
+
+  Background check and reference records
+    Retention: Duration of employment + 2 years
+    Disposal: Secure shredding; access-controlled deletion
+
+4.3 AUDIT AND COMPLIANCE RECORDS
+
+  Internal audit reports and working papers
+    Retention: 10 years
+    Disposal: Cryptographic erasure; certificate of destruction required
+
+  Regulatory examination records and correspondence
+    Retention: 10 years from examination close date
+    Disposal: Cryptographic erasure; certificate of destruction required
+
+  AML/ATF suspicious transaction reports (STRs)
+    Retention: 5 years from date of filing
+    Disposal: Cryptographic erasure; FINTRAC notification required before disposal
+
+4.4 TECHNOLOGY AND SYSTEM RECORDS
+
+  System access logs and authentication records
+    Retention: 2 years (OSFI E-21 minimum)
+    Disposal: Secure deletion; log integrity hash retained for 5 years
+
+  Network device configuration backups
+    Retention: Current version + 3 prior versions; minimum 1 year
+    Disposal: Cryptographic erasure from configuration management system
+
+  Security incident records and forensic images
+    Retention: 5 years from incident closure
+    Disposal: Cryptographic erasure; Legal hold must be confirmed as lifted
+
+4.5 MARKETING AND COMMUNICATIONS RECORDS
+
+  Marketing campaign records and customer consent logs
+    Retention: 3 years from last customer interaction
+    Disposal: Cryptographic erasure; CASL compliance log retained separately
+
+  Internal communications (email, instant messaging)
+    Retention: 3 years general; 7 years if related to a regulatory matter
+    Disposal: Automated purge via email lifecycle management system
+
+================================================================================
+5. DATA DISPOSAL PROCEDURES
+================================================================================
+
+5.1 DIGITAL MEDIA DISPOSAL
+
+All digital media containing BMO data must be disposed of using one of the
+following NIST SP 800-88 compliant methods:
+
+  a) Cryptographic Erasure
+     Preferred method for cloud storage, SSDs, and encrypted volumes.
+     Destroy the encryption key using the approved key management system (KMS).
+     A certificate of key destruction must be retained for 3 years.
+
+  b) Secure Overwrite
+     For mechanical hard drives (HDDs) not using full-disk encryption.
+     Apply a minimum of 3-pass DoD 5220.22-M overwrite using approved tooling.
+     Overwrite verification log must be retained.
+
+  c) Physical Destruction
+     For damaged media or media containing Tier 1 (Highly Confidential) data.
+     Degauss and shred using a cross-cut shredder certified to DIN 66399 Level P-5.
+     Use an approved third-party vendor. Obtain and retain a certificate of
+     destruction referencing media serial numbers.
+
+5.2 PAPER RECORD DISPOSAL
+
+All paper records containing personal or confidential information must be
+disposed of in locked shredding bins only. BMO-approved vendor Iron Mountain
+collects and cross-cut shreds all paper waste under a chain-of-custody agreement.
+
+Do not place confidential paper records in general recycling bins.
+
+5.3 REMOVABLE MEDIA (USB, OPTICAL DISCS, TAPES)
+
+  - USB drives: Physical destruction only (approved shredder on each floor)
+  - Backup tapes: Degauss + physical destruction by approved vendor
+  - Optical discs: Shred using cross-cut optical disc shredder
+
+================================================================================
+6. DATA HOLDS (LITIGATION AND REGULATORY)
+================================================================================
+
+When BMO receives a litigation hold notice or regulatory preservation order,
+normal retention schedules are suspended for affected data. Data custodians must:
+
+  1. Immediately notify the Information Governance team: data-governance@bmo.com
+  2. Tag affected data repositories with the hold reference number in the
+     Data Asset Inventory (DAI) system
+  3. Do NOT delete or modify any data under hold, even if past its scheduled
+     retention date
+  4. Await written confirmation from Legal before resuming normal disposal
+
+================================================================================
+7. ROLES AND RESPONSIBILITIES
+================================================================================
+
+  Data Owner:         Accountable for defining retention requirements for their
+                      data domain; approves exceptions to retention schedule.
+
+  Data Custodian:     Responsible for implementing retention controls in systems
+                      and executing disposal according to this policy.
+
+  Information Governance Team: Maintains retention schedule; reviews exceptions;
+                      conducts annual compliance audits.
+
+  All Employees:      Must not retain personal or confidential data beyond
+                      policy limits on personal devices or unauthorised storage.
+
+================================================================================
+8. EXCEPTIONS
+================================================================================
+
+Requests to deviate from retention periods defined in this policy require:
+
+  - Written justification from the Data Owner
+  - Approval from the Chief Data Officer or delegate
+  - Documentation in the BMO Exception Register (ServiceNow: DRTPOL-EXC)
+
+Unapproved retention of data beyond policy limits is a violation of BMO's Code
+of Conduct and may result in disciplinary action.
+
+================================================================================
+9. POLICY VIOLATIONS
+================================================================================
+
+Premature deletion of records subject to a legal or regulatory hold is a serious
+compliance breach. Report suspected violations immediately to:
+
+  - Information Governance: data-governance@bmo.com
+  - Compliance Hotline: 1-888-BMO-COMP (anonymous reporting available)
+
+================================================================================
+10. DOCUMENT HISTORY
+================================================================================
+
+  Version 1.0 — 2022-01-01 — Initial release
+  Version 2.0 — 2024-01-01 — Updated to reflect OSFI E-21 (revised 2023)
+  Version 2.1 — 2025-01-01 — Added Section 5.1(a) cryptographic erasure;
+                              updated AML/ATF retention to align with FINTRAC 2024

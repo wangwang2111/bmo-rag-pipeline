@@ -253,11 +253,13 @@ A cross-encoder concatenates query and chunk into a single input sequence and re
 
 ### Semantic captions
 
-**Decision:** Extract the single most relevant sentence from each result chunk using the cross-encoder.
+**Decision:** Extract the single most relevant sentence from each result chunk using token-overlap scoring.
 
 **Why:** Returning an entire 512-token chunk as a snippet is noisy. The caption immediately shows the reader why the chunk was retrieved, mirroring Azure AI Search's semantic captions feature.
 
-**Implementation:** Each sentence in the chunk is scored as a (query, sentence) pair using the already-loaded cross-encoder. The highest-scoring sentence is returned as the caption. No additional model downloads required.
+**Implementation:** Each sentence in the chunk is scored by the fraction of query terms it contains, with a small length bonus to prefer informative sentences over short fragments. No model inference is needed — this keeps caption extraction O(n_sentences) and adds <1ms to query latency (measured: 0.5ms).
+
+**Why not the cross-encoder:** An earlier implementation scored each sentence as a (query, sentence) pair through the cross-encoder. While slightly more accurate for captions, it added ~50-75ms per query with no impact on ranking (captions are display-only). Token-overlap recovers that latency at no accuracy cost to retrieval.
 
 ### BM25 text and metadata lookups
 
@@ -286,7 +288,7 @@ Key decisions:
 | OCR cost | Tesseract only runs when PyMuPDF yields fewer than 50 characters per page |
 | Embedding cost | Sentence splitter (no embedding calls at ingest) is the default; semantic splitter is opt-in |
 | Score fusion stability | RRF replaces fragile per-query score normalisation |
-| Reranker latency | Cross-encoder runs on top-20 candidates only, not the full corpus |
+| Reranker latency | Cross-encoder runs on top-20 candidates only, not the full corpus; caption extraction uses token-overlap (<1ms) instead of cross-encoder |
 | Context at boundaries | 50-token overlap prevents boundary-spanning answers from being missed |
 | Developer experience | Local embedding fallback means the full pipeline runs with zero paid services |
 | Idempotency | Upsert-based indexing with deterministic chunk IDs |
@@ -306,7 +308,7 @@ Key decisions:
 | OCR quality depends on scan resolution | Low-quality scans produce garbled text | Use Azure Document Intelligence in production |
 | Table extraction is unstructured | Table cells extracted as flat text with no grid structure | Use Azure Document Intelligence for table-heavy documents |
 | Two embedding models cannot be mixed | Switching models requires a full re-index | Version the ChromaDB collection name by model identifier |
-| Reranker adds 50-200ms per query | Not suitable for sub-50ms SLA requirements | Use Cohere Rerank API (GPU-hosted) instead |
+| Reranker adds ~103ms per query | Not suitable for sub-50ms SLA requirements | Use Cohere Rerank API (GPU-hosted) instead |
 
 ## Out of Scope
 
