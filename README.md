@@ -64,9 +64,16 @@ bmo_1st_project/
 │   ├── architecture.md
 │   ├── cost_estimation.md
 │   └── fabric_architecture.md
+├── sample_data/       # Synthetic test documents (mirrors Azure container layout)
+│   ├── manuals/       #   deviceA.pdf, deviceB.pdf, deviceC_scanned.pdf
+│   ├── troubleshooting/ # error101.md
+│   └── policies/      #   security.txt
+├── _generate_samples.py # Script that generated the synthetic sample data
 ├── .env.example       # Environment variable template
 └── requirements.txt   # Pinned dependencies
 ```
+
+> **Sample data**: `sample_data/` contains synthetic documents that mirror the expected Azure Blob Storage container layout (`manuals/`, `troubleshooting/`, `policies/`). These files have been uploaded to an Azure Storage container and the full pipeline has been tested end-to-end against that container. To use your own documents, upload them to your container in the same folder structure and point `AZURE_STORAGE_CONTAINER_NAME` at it.
 
 ## Setup
 
