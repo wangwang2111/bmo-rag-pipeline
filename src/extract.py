@@ -27,6 +27,7 @@ import io
 import logging
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -47,6 +48,11 @@ logging.basicConfig(
 # If a PDF page yields fewer than this many characters via PyMuPDF text
 # extraction, we consider the page to be scanned (image-only) and apply OCR.
 MIN_CHARS_PER_PAGE: int = 50
+
+# Number of blobs to download concurrently. Each worker holds one HTTP
+# connection to Azure; 8 is a safe default that saturates typical egress
+# bandwidth without exhausting file descriptors.
+EXTRACT_MAX_WORKERS: int = int(os.getenv("EXTRACT_MAX_WORKERS", "8"))
 
 
 # ── Public data contract ──────────────────────────────────────────────────────
@@ -325,10 +331,20 @@ def extract_all_documents(
         blob_names = list_blobs(container_client)
 
     records: list[DocumentRecord] = []
-    for name in blob_names:
-        record = extract_document(container_client, name)
-        if record is not None:
-            records.append(record)
+
+    with ThreadPoolExecutor(max_workers=EXTRACT_MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(extract_document, container_client, name): name
+            for name in blob_names
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                record = future.result()
+                if record is not None:
+                    records.append(record)
+            except Exception as exc:
+                logger.error("Unexpected error extracting '%s': %s", name, exc)
 
     logger.info(
         "Extraction complete: %d / %d documents succeeded.",

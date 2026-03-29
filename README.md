@@ -2,7 +2,25 @@
 
 A production-grade **Azure ETL & Retrieval-Augmented Search (RAG)** pipeline that extracts documents from Azure Blob Storage, chunks and embeds them, stores them in ChromaDB, and serves hybrid search (BM25 + vector + semantic reranking).
 
----
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Folder Structure](#folder-structure)
+- [Setup](#setup)
+- [Running the Pipeline](#running-the-pipeline)
+- [Module Quick Reference](#module-quick-reference)
+- [Assumptions](#assumptions)
+- [Known Limitations](#known-limitations)
+- [Development](#development)
+- [Further Reading](#further-reading)
+
+## Further Reading
+
+| Document | Description |
+|---|---|
+| [Architecture decisions](docs/architecture.md) | Stage-by-stage design decisions, model selection tables, trade-offs, scalability, and production migration path |
+| [Cost estimation](docs/cost_estimation.md) | Production cost breakdown across three scale scenarios and optimisation strategies |
+| [Microsoft Fabric architecture](docs/fabric_architecture.md) | How to migrate this pipeline to Microsoft Fabric and Azure AI Search for a production BMO deployment |
 
 ## Architecture
 
@@ -28,8 +46,6 @@ flowchart TD
     E --> Search
 ```
 
----
-
 ## Folder Structure
 
 ```
@@ -45,12 +61,12 @@ bmo_1st_project/
 │   └── demo.ipynb     # End-to-end walkthrough with visualisations
 ├── docs/
 │   ├── README.md      # This file
-│   └── architecture.md
+│   ├── architecture.md
+│   ├── cost_estimation.md
+│   └── fabric_architecture.md
 ├── .env.example       # Environment variable template
 └── requirements.txt   # Pinned dependencies
 ```
-
----
 
 ## Setup
 
@@ -93,7 +109,7 @@ Required variables:
 | `AZURE_STORAGE_ACCOUNT_NAME` | Storage account name (if not using connection string) |
 | `AZURE_STORAGE_ACCOUNT_KEY` | Storage account key (if not using connection string) |
 | `AZURE_STORAGE_CONTAINER_NAME` | Blob container name (default: `documents`) |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key (optional — falls back to local model) |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key (optional, falls back to local model) |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Embedding deployment name (default: `text-embedding-3-small`) |
 
@@ -106,9 +122,14 @@ Optional variables (have sensible defaults):
 | `CHUNK_OVERLAP` | `50` | Token overlap between chunks |
 | `TOP_N_RESULTS` | `5` | Default search result count |
 | `EMBEDDING_BATCH_SIZE` | `32` | Embedding API batch size |
+| `EXTRACT_MAX_WORKERS` | `8` | Concurrent blob download threads |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
----
+### 4. Verify installation
+
+```bash
+python -c "import fitz, chromadb, rank_bm25, sentence_transformers, llama_index, azure.storage.blob, openai; print('All dependencies OK')"
+```
 
 ## Running the Pipeline
 
@@ -149,8 +170,6 @@ python src/search.py "security policy" --full-text
 ```bash
 jupyter notebook notebooks/demo.ipynb
 ```
-
----
 
 ## Module Quick Reference
 
@@ -201,14 +220,12 @@ for r in results:
     print(r.rank, r.blob_name, r.caption)
 ```
 
----
-
 ## Assumptions
 
 1. **Container structure**: Documents are organised in subfolders (`manuals/`, `troubleshooting/`, `policies/`) but the pipeline processes all blobs regardless of folder.
 2. **Language**: All documents are English (Tesseract OCR configured for `eng`).
 3. **PDF scan detection**: A page with fewer than 50 characters (on average) is considered scanned. This threshold works well for technical documents but may need tuning for dense tables.
-4. **Embedding dimensions**: Azure OpenAI `text-embedding-3-small` produces 1536-dim vectors; the local fallback produces 384-dim vectors. The two cannot be mixed in the same ChromaDB collection — if you switch embedding models, run `python src/ingest.py --reset`.
+4. **Embedding dimensions**: Azure OpenAI `text-embedding-3-small` produces 1536-dim vectors; the local fallback produces 384-dim vectors. The two cannot be mixed in the same ChromaDB collection. If switching embedding models, run `python src/ingest.py --reset`.
 5. **BM25 index is in-memory**: The BM25 index is rebuilt from ChromaDB on each process start. For large collections (>100K chunks), this should be replaced with a dedicated search backend.
 
 ## Known Limitations
@@ -216,11 +233,9 @@ for r in results:
 - **Scanned PDF quality**: OCR accuracy depends on scan quality and DPI. 300 DPI is the default; lower-quality scans may produce garbled text.
 - **Table extraction**: PyMuPDF extracts table cells as plain text without structure. For table-heavy documents, consider Azure Document Intelligence.
 - **Multilingual documents**: The pipeline is configured for English. Multi-language support requires setting `lang` in pytesseract and a multilingual embedding model.
-- **BM25 + metadata filter mismatch**: BM25 searches the entire corpus; vector search respects the `filter_metadata` parameter. When a metadata filter is active, BM25 candidates from outside the filter may appear in RRF fusion. This is a known limitation — a production system would push BM25 inside the metadata-partitioned space.
+- **BM25 + metadata filter mismatch**: BM25 searches the entire corpus; vector search respects the `filter_metadata` parameter. When a metadata filter is active, BM25 candidates from outside the filter may appear in RRF fusion. A production system would push BM25 inside the metadata-partitioned space.
 - **BM25 text/metadata lookups**: Originally O(n) `list.index()` scans (~800k string comparisons per query at 20k chunks). Fixed by adding a `_id_to_index: dict[str, int]` in `BM25Index` built once at index load time, reducing all lookups to O(1).
-- **Reranker latency**: The cross-encoder adds ~50–200ms per query depending on hardware. For latency-sensitive applications, use Cohere Rerank API instead.
-
----
+- **Reranker latency**: The cross-encoder adds ~50-200ms per query depending on hardware. For latency-sensitive applications, use Cohere Rerank API instead.
 
 ## Development
 
