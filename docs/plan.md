@@ -343,6 +343,7 @@ defaults, progress visibility, and operational controls.
 | **Idempotency** | Upsert-based indexing with deterministic chunk IDs |
 | **Metadata richness** | Source, page number, folder, document type, and chunk position are preserved on every chunk |
 | **Security** | All credentials are loaded via environment variables; `.env.example` is provided and `.env` is gitignored |
+| **BM25 text/metadata lookup** | `BM25Index` maintains a `_id_to_index` dict (chunk_id → list position) built once at index load time, reducing per-query lookups from O(n) list scans to O(1) hash table lookups |
 
 ## 5. Known Trade-offs and Limitations
 
@@ -355,6 +356,7 @@ defaults, progress visibility, and operational controls.
 | Table extraction is unstructured | Table cells are extracted as flat text with no grid structure | Use Azure Document Intelligence for table-heavy documents |
 | Two embedding models cannot be mixed | Switching models requires a full re-index | Version the ChromaDB collection name by model identifier |
 | Reranker adds 50 to 200ms per query | Not suitable for sub-50ms SLA requirements | Use Cohere Rerank API (GPU-hosted) instead |
+| ~~BM25 text/metadata lookups were O(n)~~ | ~~At 20k chunks, each query triggered up to 800k string comparisons~~ | Fixed: `_id_to_index` dict reduces all lookups to O(1) |
 
 ## 6. Out of Scope
 

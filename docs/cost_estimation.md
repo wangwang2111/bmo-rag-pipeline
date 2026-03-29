@@ -35,8 +35,6 @@ retrieval quality.
 **Verdict:** Economical for internal tooling. The index service dominates cost even at low query
 volume because it is priced as a reserved capacity tier, not per-request.
 
----
-
 ## Scenario 2: Medium Scale (Departmental)
 
 **Profile:** ~500 documents, ~10,000 queries/month, multiple teams sharing one deployment.
@@ -52,8 +50,6 @@ volume because it is priced as a reserved capacity tier, not per-request.
 
 **Verdict:** Reasonable for a department-level knowledge base. Cohere Rerank begins to show
 meaningful cost at this volume but is still minor relative to the search service.
-
----
 
 ## Scenario 3: Large Scale (Enterprise)
 
@@ -73,8 +69,6 @@ SLA requirements.
 are the Azure AI Search tier and the Cohere Rerank volume. Optimising those two has the highest
 impact.
 
----
-
 ## Is It Worth It?
 
 The full production stack makes sense when the following conditions are true:
@@ -87,8 +81,6 @@ The full production stack makes sense when the following conditions are true:
 For a take-home demo or proof-of-concept, the current implementation (ChromaDB + local cross-encoder
 + `all-MiniLM-L6-v2` fallback) runs at **zero cost** with no Azure account required. The production
 migration path exists when the project graduates to a real deployment.
-
----
 
 ## Cost Optimisation Strategies
 

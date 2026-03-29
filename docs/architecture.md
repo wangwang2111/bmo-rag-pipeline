@@ -2,12 +2,12 @@
 
 ## Overview
 
-The pipeline is designed around three guiding principles:
-1. **Modularity** — each stage is independently testable and swappable
-2. **Idempotency** — re-running ingest never creates duplicates
-3. **Graceful degradation** — Azure-dependent components fall back to free local alternatives
+![Pipeline Architecture](assets/architecture.svg)
 
----
+The pipeline is designed around three guiding principles:
+1. **Modularity**: each stage is independently testable and swappable
+2. **Idempotency**: re-running ingest never creates duplicates
+3. **Graceful degradation**: Azure-dependent components fall back to free local alternatives
 
 ## Stage 1: Extraction (`extract.py`)
 
@@ -33,8 +33,6 @@ The pipeline is designed around three guiding principles:
 
 **Why**: Raw Markdown contains `#`, `**`, `[link](url)` syntax that pollutes the chunk text and confuses tokenisers. Stripping to plain text gives cleaner embeddings.
 
----
-
 ## Stage 2: Chunking (`chunk.py`)
 
 ### Sentence splitter as default
@@ -45,7 +43,7 @@ The pipeline is designed around three guiding principles:
 - Token-aware: respects LLM context window limits
 - Sentence-boundary-aware: does not cut mid-sentence
 - Deterministic and fast (no embedding calls)
-- 512 tokens ≈ 350–400 words — long enough to capture context, short enough for precise retrieval
+- 512 tokens ≈ 350–400 words, long enough to capture context and short enough for precise retrieval
 
 **Overlap**: 50-token overlap ensures that information near chunk boundaries is captured by at least one chunk from either side. This is critical for questions that span paragraph breaks.
 
@@ -63,8 +61,6 @@ The pipeline is designed around three guiding principles:
 ### Minimum chunk size filter
 
 Chunks shorter than 30 characters (page numbers, headers, dividers) are dropped. These micro-chunks add noise to BM25 and vector indexes without contributing retrievable information.
-
----
 
 ## Stage 3: Embeddings (`embed.py`)
 
@@ -92,8 +88,6 @@ Chunks shorter than 30 characters (page numbers, headers, dividers) are dropped.
 Embedding calls are batched (default: 32 texts per call) to:
 - Reduce round-trip latency (fewer HTTP requests)
 - Stay within the Azure OpenAI token-per-request limit (~8192 tokens per call for `text-embedding-3-small`)
-
----
 
 ## Stage 4: Indexing (`index.py`)
 
@@ -125,8 +119,6 @@ For a production BMO deployment, **Azure AI Search** would be the natural replac
 
 Embeddings are L2-normalised before storage (both models do this). Cosine distance = 1 - dot_product for normalised vectors, making cosine and inner-product distance equivalent. ChromaDB's `hnsw:space=cosine` is set explicitly for clarity.
 
----
-
 ## Stage 5: Hybrid Search (`search.py`)
 
 ### Why hybrid (not pure vector)?
@@ -153,7 +145,7 @@ Pure vector search misses exact keyword matches (product codes, error codes like
 
 **Why**:
 - Cross-encoders read query + document jointly (not independently like bi-encoders), giving much better relevance signals
-- `ms-marco-MiniLM-L-6-v2` is trained specifically on MS MARCO passage ranking — ideal for this retrieval task
+- `ms-marco-MiniLM-L-6-v2` is trained specifically on MS MARCO passage ranking, making it ideal for this retrieval task
 - Applied to only 20 candidates so latency is bounded (~100ms)
 
 **Trade-off**: Adds ~50–200ms to query latency depending on hardware. For sub-50ms SLA requirements, use Cohere Rerank API (GPU-hosted) or skip reranking.
@@ -166,7 +158,11 @@ Pure vector search misses exact keyword matches (product codes, error codes like
 
 **Implementation**: We score each sentence independently as a (query, sentence) pair with the cross-encoder. The highest-scoring sentence is the caption. This reuses the already-loaded cross-encoder with no additional model downloads.
 
----
+### BM25 text and metadata lookups
+
+**Decision**: `BM25Index` maintains a `_id_to_index: dict[str, int]` mapping chunk IDs to their position in the underlying lists, built once during `build()`.
+
+**Why**: After RRF fusion, any BM25-only candidate (a chunk BM25 found that vector search did not) must have its text fetched from the BM25 index before being passed to the cross-encoder. The original implementation used `list.index()` for this, which is an O(n) scan through all stored chunk IDs. At 20k chunks with up to 50 BM25 candidates per query, this produced up to ~800k string comparisons per search call. The dict reduces every lookup to O(1) regardless of collection size, at the cost of one additional dict (approximately 1–2 MB at 20k chunks) allocated during index build.
 
 ## Data Flow Summary
 
@@ -185,8 +181,6 @@ SearchResult(rank, chunk_id, blob_name, text, score, rrf_score,
              bm25_rank, vector_rank, caption, metadata)
 ```
 
----
-
 ## Scalability Considerations
 
 | Bottleneck | Current approach | At scale |
@@ -194,6 +188,7 @@ SearchResult(rank, chunk_id, blob_name, text, score, rrf_score,
 | Blob download | Sequential per blob | Parallel async with `asyncio` + `aiohttp` |
 | Embedding generation | Batched API calls | Parallel batches or streaming endpoint |
 | BM25 index | In-memory rebuild on startup | Redis / Elasticsearch / Azure AI Search |
+| BM25 text/metadata lookup | O(1) dict lookup via `_id_to_index` (fixed) | No further change needed until BM25 itself is replaced |
 | Vector search | ChromaDB local HNSW | Azure AI Search / Pinecone / Weaviate |
 | Reranking | Local CPU cross-encoder | Cohere Rerank API or GPU-hosted model |
 | Metadata filtering | ChromaDB `where` clause | Partitioned indexes per document type |
