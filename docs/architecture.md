@@ -38,6 +38,12 @@ Azure Blob Storage
 
 **Why:** PyMuPDF text extraction is ~100x faster than OCR. Running Tesseract on a 100-page digital PDF is pure waste. The 50-char threshold catches genuinely scanned pages while tolerating PDFs with mostly images but some embedded text (headers/footers).
 
+The number 50 was chosen as a safe middle ground:
+
+- A genuine digital page typically yields 500-3000+ characters
+- A genuine scanned page yields 0-5 characters (sometimes a stray embedded character or metadata)
+- 50 sits far from both clusters, so there's almost no risk of misclassifying either type
+
 **Trade-off:** A hybrid PDF (partly digital, partly scanned) is routed based on the average character count across all pages. Page-level routing would be more accurate but significantly more complex. For this use case (technical manuals), fully scanned or fully digital PDFs are the norm.
 
 ### OCR configuration
@@ -45,6 +51,13 @@ Azure Blob Storage
 **Decision:** Run Tesseract at 300 DPI with `lang=eng`.
 
 **Why:** 300 DPI is the minimum recommended for reliable Tesseract OCR. Lower DPI yields unacceptable word-error rates on small fonts.
+
+At low DPI the pixels representing a character are so few that letterforms blur together:
+
+- 72 DPI  →  a lowercase 'a' might be ~10px tall  →  serifs and curves are mush
+- 150 DPI →  ~20px tall  →  readable but small fonts and tight spacing still fail
+- 300 DPI →  ~40px tall  →  sufficient detail for reliable character recognition
+- 600 DPI →  ~80px tall  →  diminishing returns; 4x the memory and processing time
 
 **Trade-off:** Memory usage scales with DPI squared. For large scanned PDFs (>50 pages), consider lowering to 200 DPI or processing page-by-page with streaming.
 
@@ -54,13 +67,20 @@ Azure Blob Storage
 
 **Why:** Raw Markdown contains `#`, `**`, and `[link](url)` syntax that pollutes chunk text, confuses tokenisers, and inflates BM25 term weights on structural tokens rather than content tokens.
 
-### Parallel extraction
+### Sequential extraction
 
-**Decision:** `extract_all_documents` uses `ThreadPoolExecutor` with `EXTRACT_MAX_WORKERS=8` (configurable) rather than a sequential loop.
+**Decision:** `extract_all_documents` uses a plain sequential loop over all blob names.
 
-**Why:** Blob downloads are network I/O bound. The GIL is released during network I/O, so threads genuinely run in parallel waiting for Azure responses. At 3000 documents, this reduces download wall time by approximately 8x.
+**Why:** The corpus for this task is approximately 10 documents. At that scale, the overhead of spinning up a thread pool or process pool (thread creation, synchronisation, result collection) exceeds the time saved by running downloads in parallel. A sequential loop is simpler, easier to debug, and produces deterministic ordering in logs and output.
 
-**Trade-off:** OCR (Tesseract) is CPU-bound, not I/O bound. Threads do not escape the GIL for CPU work. For large numbers of scanned PDFs, `ProcessPoolExecutor` on the OCR step would be more effective. The current approach gets near-full benefit for digital documents and partial benefit for scanned ones.
+The two parallelism options and why neither is warranted here:
+
+| Approach | Good for | Why not here |
+|---|---|---|
+| `ThreadPoolExecutor` | I/O-bound work at scale (100+ blobs). GIL is released during network waits so downloads run concurrently. | Pool overhead outweighs gains at 10 documents. Provides no benefit for OCR since Tesseract is CPU-bound and threads still queue behind the GIL for CPU work. |
+| `ProcessPoolExecutor` | CPU-bound work (OCR). Each process has its own GIL so Tesseract runs truly in parallel across cores. | Requires pickling all arguments across process boundaries. `ContainerClient` is not picklable without restructuring. Process startup cost is significant relative to 10 documents. |
+
+**At scale (100+ documents):** split by work type. Use `asyncio` with the async Azure SDK (`azure.storage.blob.aio`) for downloads (I/O-bound), and `ProcessPoolExecutor` for OCR (CPU-bound). Each approach targets the actual bottleneck for its category. This is documented in the Scalability Considerations section.
 
 **Output:** Every document, regardless of format, becomes a `DocumentRecord` with `text`, `page_count`, `source_type`, and `metadata` fields. Downstream stages are completely format-agnostic.
 
@@ -273,7 +293,7 @@ Key decisions:
 | Metadata richness | Source, page number, folder, document type, and chunk position preserved on every chunk |
 | Security | All credentials loaded via environment variables; `.env` is gitignored |
 | BM25 text/metadata lookup | `_id_to_index` dict reduces per-query lookups from O(n) list scans to O(1) hash lookups |
-| Parallel extraction | `ThreadPoolExecutor` with 8 workers reduces blob download wall time by ~8x |
+| Extraction simplicity | Sequential loop over ~10 documents; no pool overhead for a corpus this small |
 
 ## Known Trade-offs and Limitations
 
@@ -282,7 +302,7 @@ Key decisions:
 | ChromaDB is single-node embedded HNSW | Not suitable for more than ~1M vectors | Replace with Azure AI Search or Pinecone |
 | BM25 index rebuilt from ChromaDB on every process start | Slow cold start for large collections | Persist the BM25 index or use Elasticsearch |
 | BM25 ignores metadata filters | Out-of-filter results can appear in RRF fusion | Partition the BM25 corpus by document type |
-| Parallel extraction uses threads, not processes | OCR (CPU-bound) does not benefit fully from thread parallelism | Use `ProcessPoolExecutor` for the OCR step |
+| Sequential extraction does not parallelise | Acceptable for ~10 documents; becomes a bottleneck at 100+ | `asyncio` for downloads, `ProcessPoolExecutor` for OCR |
 | OCR quality depends on scan resolution | Low-quality scans produce garbled text | Use Azure Document Intelligence in production |
 | Table extraction is unstructured | Table cells extracted as flat text with no grid structure | Use Azure Document Intelligence for table-heavy documents |
 | Two embedding models cannot be mixed | Switching models requires a full re-index | Version the ChromaDB collection name by model identifier |
@@ -300,13 +320,13 @@ The following concerns are intentionally outside the boundaries of this pipeline
 
 ## Scalability Considerations
 
-| Bottleneck | Current approach | At scale |
+| Bottleneck | Current approach | At scale (100+ docs) |
 |---|---|---|
-| Blob download | `ThreadPoolExecutor` 8 workers | Async with `asyncio` + `azure.storage.blob.aio` |
-| OCR (scanned PDFs) | Threads (limited by GIL for CPU work) | `ProcessPoolExecutor` for Tesseract workers |
+| Blob download | Sequential loop (suitable for ~10 docs) | `asyncio` + `azure.storage.blob.aio` — I/O-bound, GIL released during network waits |
+| OCR (scanned PDFs) | Sequential per page (suitable for ~10 docs) | `ProcessPoolExecutor` — CPU-bound, each process has its own GIL |
 | Embedding generation | Batched sequential API calls | Parallel batches with shared rate limiter |
 | BM25 index cold start | Full collection scan into RAM on startup | Persist serialised index or use Elasticsearch |
-| BM25 text/metadata lookup | O(1) dict lookup via `_id_to_index` (fixed) | No further change needed until BM25 is replaced |
+| BM25 text/metadata lookup | O(1) dict lookup via `_id_to_index` | No further change needed until BM25 is replaced |
 | Vector search | ChromaDB local HNSW | Azure AI Search / Pinecone / Weaviate |
 | Reranking | Local CPU cross-encoder | Cohere Rerank API or GPU-hosted model |
 | Metadata filtering | ChromaDB `where` clause | Partitioned indexes per document type |

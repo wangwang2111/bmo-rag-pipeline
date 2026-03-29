@@ -122,7 +122,6 @@ Optional variables (have sensible defaults):
 | `CHUNK_OVERLAP` | `50` | Token overlap between chunks |
 | `TOP_N_RESULTS` | `5` | Default search result count |
 | `EMBEDDING_BATCH_SIZE` | `32` | Embedding API batch size |
-| `EXTRACT_MAX_WORKERS` | `8` | Concurrent blob download threads |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
 ### 4. Verify installation
