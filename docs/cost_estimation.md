@@ -17,8 +17,6 @@ retrieval quality.
 | Semantic reranking | Cohere Rerank API | $1.00 per 1,000 searches |
 | Document storage | Azure Blob Storage (LRS) | $0.018 per GB/month |
 
----
-
 ## Scenario 1: Small Scale (Internal Team)
 
 **Profile:** ~10 to 50 documents, ~1,000 queries/month, single department.
@@ -144,8 +142,6 @@ Terraform but can reduce the search service cost by 30 to 50% for workloads with
 usage patterns.
 
 **Savings:** $75 to $125/month at Standard S1 assuming 50% off-hours reduction.
-
----
 
 ## Summary
 

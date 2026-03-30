@@ -257,7 +257,7 @@ A cross-encoder concatenates query and chunk into a single input sequence and re
 
 **Why:** Returning an entire 512-token chunk as a snippet is noisy. The caption immediately shows the reader why the chunk was retrieved, mirroring Azure AI Search's semantic captions feature.
 
-**Implementation:** Each sentence in the chunk is scored by the fraction of query terms it contains, with a small length bonus to prefer informative sentences over short fragments. No model inference is needed — this keeps caption extraction O(n_sentences) and adds <1ms to query latency (measured: 0.5ms).
+**Implementation:** Each sentence in the chunk is scored by the fraction of query terms it contains, with a small length bonus to prefer informative sentences over short fragments. No model inference is needed, keeping caption extraction O(n_sentences) and adding <1ms to query latency (measured: 0.5ms).
 
 **Why not the cross-encoder:** An earlier implementation scored each sentence as a (query, sentence) pair through the cross-encoder. While slightly more accurate for captions, it added ~50-75ms per query with no impact on ranking (captions are display-only). Token-overlap recovers that latency at no accuracy cost to retrieval.
 
@@ -324,8 +324,8 @@ The following concerns are intentionally outside the boundaries of this pipeline
 
 | Bottleneck | Current approach | At scale (100+ docs) |
 |---|---|---|
-| Blob download | Sequential loop (suitable for ~10 docs) | `asyncio` + `azure.storage.blob.aio` — I/O-bound, GIL released during network waits |
-| OCR (scanned PDFs) | Sequential per page (suitable for ~10 docs) | `ProcessPoolExecutor` — CPU-bound, each process has its own GIL |
+| Blob download | Sequential loop (suitable for ~10 docs) | `asyncio` + `azure.storage.blob.aio` (I/O-bound, GIL released during network waits) |
+| OCR (scanned PDFs) | Sequential per page (suitable for ~10 docs) | `ProcessPoolExecutor` (CPU-bound, each process has its own GIL) |
 | Embedding generation | Batched sequential API calls | Parallel batches with shared rate limiter |
 | BM25 index cold start | Full collection scan into RAM on startup | Persist serialised index or use Elasticsearch |
 | BM25 text/metadata lookup | O(1) dict lookup via `_id_to_index` | No further change needed until BM25 is replaced |

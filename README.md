@@ -74,7 +74,7 @@ bmo_1st_project/
 └── requirements.txt   # Pinned dependencies
 ```
 
-> **Sample data**: `sample_data/` contains synthetic documents that mirror the expected container layout (`manuals/`, `troubleshooting/`, `policies/`). These files were uploaded to an **Azure Data Lake Storage Gen2** container and the full pipeline was tested end-to-end against it. ADLS Gen2 is fully compatible with the `azure-storage-blob` SDK used here — the same connection string, `BlobServiceClient`, and `list_blobs()` / `download_blob()` calls work identically against both ADLS Gen2 and standard Blob Storage. To use your own documents, upload them to your container in the same folder structure and point `AZURE_STORAGE_CONTAINER_NAME` at it.
+> **Sample data**: `sample_data/` contains synthetic documents that mirror the expected container layout (`manuals/`, `troubleshooting/`, `policies/`). These files were uploaded to an **Azure Data Lake Storage Gen2** container and the full pipeline was tested end-to-end against it. ADLS Gen2 is fully compatible with the `azure-storage-blob` SDK used here: the same connection string, `BlobServiceClient`, and `list_blobs()` / `download_blob()` calls work identically against both ADLS Gen2 and standard Blob Storage. To use your own documents, upload them to your container in the same folder structure and point `AZURE_STORAGE_CONTAINER_NAME` at it.
 
 ## Setup
 
@@ -245,7 +245,7 @@ Measured on a 10-document corpus (42 chunks) running on CPU (no GPU), using Azur
 
 Cross-encoder reranking is the dominant bottleneck. For sub-50ms production latency, replace with [Cohere Rerank API](https://cohere.com/rerank) or cache reranker scores for frequent queries.
 
-### Retrieval accuracy — Recall@K
+### Retrieval accuracy: Recall@K
 
 Evaluated on 21 ground-truth queries spanning 4 query types across all 10 documents.
 
@@ -257,7 +257,7 @@ Evaluated on 21 ground-truth queries spanning 4 query types across all 10 docume
 | OCR / scanned PDF | 100% | 100% | 100% |
 | **Overall** | **95%** | **95%** | **95%** |
 
-The one persistent miss ("steps to contain a ransomware breach") is a known multi-hop reasoning gap — see [Known Limitations](#known-limitations) below.
+The one persistent miss ("steps to contain a ransomware breach") is a known multi-hop reasoning gap. See [Known Limitations](#known-limitations) below.
 
 ## Assumptions
 
@@ -275,7 +275,7 @@ The one persistent miss ("steps to contain a ransomware breach") is a known mult
 - **BM25 + metadata filter mismatch**: BM25 searches the entire corpus; vector search respects the `filter_metadata` parameter. When a metadata filter is active, BM25 candidates from outside the filter may appear in RRF fusion. A production system would push BM25 inside the metadata-partitioned space.
 - **BM25 text/metadata lookups**: Originally O(n) `list.index()` scans - which scans the list from the beginning until it finds a match (~800k string comparisons per query at 20k chunks). This has been fixed by adding a `_id_to_index: dict[str, int]` in `BM25Index` built once at index load time, reducing all lookups to O(1).
 - **Reranker latency**: The cross-encoder adds ~100ms per query on CPU. For latency-sensitive applications, use Cohere Rerank API instead.
-- **Multi-hop queries**: The pipeline retrieves in a single pass — the query is embedded once and chunks are ranked by direct similarity. This fails when the answer requires chaining two separate chunks. For example, "steps to contain a ransomware breach" requires first linking "ransomware" to a P1 incident definition (Chunk A), then following that to the containment procedure section (Chunk B). Chunk B never mentions "ransomware" so it scores low and is not retrieved. The fix is query expansion with an LLM (HyDE, step-back prompting, or ReAct) to rewrite the query before retrieval — this is the standard motivation for agentic RAG architectures.
+- **Multi-hop queries**: The pipeline retrieves in a single pass, embedding the query once and ranking chunks by direct similarity. This fails when answering a question requires chaining two separate chunks. For example, "steps to contain a ransomware breach" requires first linking "ransomware" to a P1 incident definition (Chunk A), then following that to the containment procedure section (Chunk B). Chunk B never mentions "ransomware" so it scores low and is not retrieved. The fix is query expansion with an LLM (HyDE, step-back prompting, or ReAct) to rewrite the query before retrieval, which is the standard motivation for agentic RAG architectures.
 
 ## Development
 

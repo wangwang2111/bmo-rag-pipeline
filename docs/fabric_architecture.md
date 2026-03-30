@@ -107,7 +107,7 @@ Key decision: Azure AI Search natively supports hybrid search (vector + BM25 in 
 
 ### Stage 5: Search
 
-**Current:** `search.py` manually orchestrates BM25 query, vector query, RRF fusion, cross-encoder reranking, and caption extraction in ~250 lines of code.
+**Current:** `search.py` manually orchestrates BM25 query, vector query, RRF fusion, cross-encoder reranking, and token-overlap caption extraction in ~250 lines of code.
 
 **Fabric / Azure AI Search:** A single `search_client.search()` call with `query_type="semantic"` and `vector_queries=[...]` replaces the entire manual pipeline. The Search SDK handles RRF fusion internally. The semantic ranker handles reranking and caption extraction.
 
