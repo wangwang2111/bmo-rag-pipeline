@@ -173,10 +173,11 @@ def generate_answer(
 
     context_block = "\n\n---\n\n".join(contexts)
     system_prompt = (
-        "You are a technical support assistant. Answer the question using ONLY "
-        "the context provided below. If the answer cannot be found in the context, "
-        "respond with: 'The context does not contain enough information to answer "
-        "this question.'\n\n"
+        "You are a technical support assistant. Answer the question based on the "
+        "context provided below. Use the information in the context to construct "
+        "your answer, even if the context requires some interpretation. Only say "
+        "you cannot answer if the context contains absolutely no relevant "
+        "information about the topic.\n\n"
         f"Context:\n{context_block}"
     )
 
