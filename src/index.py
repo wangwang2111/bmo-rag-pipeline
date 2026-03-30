@@ -254,6 +254,260 @@ def get_collection_stats(
     }
 
 
+# ── Azure AI Search backend ───────────────────────────────────────────────────
+
+AZURE_SEARCH_INDEX_NAME: str = os.getenv("AZURE_SEARCH_INDEX_NAME", "bmo-rag-chunks")
+AZURE_SEARCH_VECTOR_DIMS: int = int(os.getenv("AZURE_SEARCH_VECTOR_DIMS", "1536"))
+VECTOR_BACKEND: str = os.getenv("VECTOR_BACKEND", "chroma").lower()
+
+
+class AzureAISearchIndexer:
+    """
+    Indexes ``EmbeddedChunk`` objects into Azure AI Search.
+
+    The index schema is created (or updated) automatically on first use via
+    ``create_or_update_index`` — fully idempotent.  Uploads use
+    ``merge_or_upload_documents`` so re-running ingest never creates duplicates.
+
+    Azure AI Search natively provides BM25 keyword search, vector search, RRF
+    fusion, semantic reranking, and extractive captions — all from a single
+    search API call — replacing the manual pipeline in ``search.py``.
+
+    Required env vars
+    -----------------
+    AZURE_SEARCH_ENDPOINT    e.g. https://<service>.search.windows.net
+    AZURE_SEARCH_KEY         Admin API key
+    AZURE_SEARCH_INDEX_NAME  Index name (default: bmo-rag-chunks)
+    AZURE_SEARCH_VECTOR_DIMS Embedding dimensions: 1536 (Azure OpenAI) or
+                             384 (all-MiniLM-L6-v2 local fallback)
+    """
+
+    _SEMANTIC_CONFIG = "bmo-semantic"
+    _VECTOR_PROFILE = "hnsw-profile"
+
+    def __init__(self) -> None:
+        try:
+            from azure.core.credentials import AzureKeyCredential
+            from azure.search.documents import SearchClient
+            from azure.search.documents.indexes import SearchIndexClient
+        except ImportError as exc:
+            raise ImportError(
+                "pip install azure-search-documents>=11.4.0"
+            ) from exc
+
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from azure.search.documents.indexes import SearchIndexClient
+
+        endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
+        key = os.environ["AZURE_SEARCH_KEY"]
+        credential = AzureKeyCredential(key)
+
+        self.index_name = AZURE_SEARCH_INDEX_NAME
+        self.vector_dims = AZURE_SEARCH_VECTOR_DIMS
+        self._index_client = SearchIndexClient(endpoint, credential)
+        self._search_client = SearchClient(endpoint, self.index_name, credential)
+        self._index_ready = False
+        logger.debug("AzureAISearchIndexer ready (index=%s).", self.index_name)
+
+    def _ensure_index(self) -> None:
+        """Create or update the search index schema (idempotent)."""
+        if self._index_ready:
+            return
+
+        from azure.search.documents.indexes.models import (
+            HnswAlgorithmConfiguration,
+            SearchField,
+            SearchFieldDataType,
+            SearchIndex,
+            SemanticConfiguration,
+            SemanticField,
+            SemanticPrioritizedFields,
+            SemanticSearch,
+            SimpleField,
+            SearchableField,
+            VectorSearch,
+            VectorSearchProfile,
+        )
+
+        fields = [
+            SimpleField(name="chunk_id", type=SearchFieldDataType.String,
+                        key=True, filterable=True),
+            SearchableField(name="text", type=SearchFieldDataType.String,
+                            analyzer_name="en.lucene"),
+            SimpleField(name="blob_name", type=SearchFieldDataType.String,
+                        filterable=True, facetable=True),
+            SimpleField(name="source_type", type=SearchFieldDataType.String,
+                        filterable=True, facetable=True),
+            SimpleField(name="chunk_index", type=SearchFieldDataType.Int32,
+                        filterable=True),
+            SimpleField(name="chunk_total", type=SearchFieldDataType.Int32),
+            SimpleField(name="page_count", type=SearchFieldDataType.Int32),
+            SimpleField(name="embedding_model", type=SearchFieldDataType.String,
+                        filterable=True),
+            SearchField(
+                name="embedding",
+                type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                searchable=True,
+                vector_search_dimensions=self.vector_dims,
+                vector_search_profile_name=self._VECTOR_PROFILE,
+            ),
+        ]
+
+        vector_search = VectorSearch(
+            algorithms=[HnswAlgorithmConfiguration(name="hnsw-algo")],
+            profiles=[VectorSearchProfile(
+                name=self._VECTOR_PROFILE,
+                algorithm_configuration_name="hnsw-algo",
+            )],
+        )
+
+        semantic_search = SemanticSearch(
+            configurations=[
+                SemanticConfiguration(
+                    name=self._SEMANTIC_CONFIG,
+                    prioritized_fields=SemanticPrioritizedFields(
+                        content_fields=[SemanticField(field_name="text")]
+                    ),
+                )
+            ]
+        )
+
+        index = SearchIndex(
+            name=self.index_name,
+            fields=fields,
+            vector_search=vector_search,
+            semantic_search=semantic_search,
+        )
+        self._index_client.create_or_update_index(index)
+        self._index_ready = True
+        logger.info("Azure AI Search index '%s' ready.", self.index_name)
+
+    def index_chunks(
+        self,
+        chunks: list[EmbeddedChunk],
+        batch_size: int = INDEX_BATCH_SIZE,
+    ) -> dict:
+        """
+        Upload ``EmbeddedChunk`` objects using merge-or-upload semantics.
+
+        Returns a stats dict with ``total_chunks``, ``unique_blobs``, and
+        ``index_name``.
+        """
+        if not chunks:
+            logger.warning("index_chunks called with empty list.")
+            return {"total_chunks": 0, "unique_blobs": 0,
+                    "index_name": self.index_name}
+
+        self._ensure_index()
+        total = len(chunks)
+
+        for batch_start in range(0, total, batch_size):
+            batch = chunks[batch_start: batch_start + batch_size]
+            documents = [
+                {
+                    "chunk_id": c.chunk_id,
+                    "text": c.text,
+                    "blob_name": c.metadata.get("blob_name", ""),
+                    "source_type": c.metadata.get("source_type", ""),
+                    "chunk_index": int(c.metadata.get("chunk_index", 0)),
+                    "chunk_total": int(c.metadata.get("chunk_total", 0)),
+                    "page_count": int(c.metadata.get("page_count", 0)),
+                    "embedding_model": c.embedding_model,
+                    "embedding": c.embedding,
+                }
+                for c in batch
+            ]
+            self._search_client.merge_or_upload_documents(documents)
+            logger.debug(
+                "Uploaded batch %d–%d / %d to Azure AI Search.",
+                batch_start + 1, batch_start + len(batch), total,
+            )
+
+        unique_blobs = {c.metadata.get("blob_name", "") for c in chunks}
+        logger.info(
+            "Indexed %d chunks into Azure AI Search index '%s'.",
+            total, self.index_name,
+        )
+        return {
+            "total_chunks": total,
+            "unique_blobs": len(unique_blobs),
+            "index_name": self.index_name,
+        }
+
+    def delete_index(self) -> None:
+        """Delete the Azure AI Search index."""
+        try:
+            self._index_client.delete_index(self.index_name)
+            self._index_ready = False
+            logger.info("Azure AI Search index '%s' deleted.", self.index_name)
+        except Exception as exc:
+            logger.warning("Could not delete index '%s': %s", self.index_name, exc)
+
+    def get_stats(self) -> dict:
+        """Return document count and index name from the Azure AI Search service."""
+        try:
+            stats = self._index_client.get_index_statistics(self.index_name)
+            return {
+                "total_chunks": stats.document_count,
+                "index_name": self.index_name,
+            }
+        except Exception as exc:
+            logger.warning("Could not fetch index stats: %s", exc)
+            return {"index_name": self.index_name}
+
+
+class _ChromaDBIndexer:
+    """
+    Thin wrapper around the ChromaDB module functions conforming to the same
+    interface as ``AzureAISearchIndexer``.
+
+    Not intended for direct use — instantiate via ``get_indexer()``.
+    """
+
+    def __init__(self) -> None:
+        self._client = get_chroma_client()
+        self._collection = get_or_create_collection(client=self._client)
+
+    def index_chunks(
+        self,
+        chunks: list[EmbeddedChunk],
+        batch_size: int = INDEX_BATCH_SIZE,
+    ) -> dict:
+        """Upsert chunks into ChromaDB and return collection stats."""
+        # Calls the module-level index_chunks function (not this method).
+        index_chunks(chunks, collection=self._collection, batch_size=batch_size)
+        return get_collection_stats(self._collection)
+
+    def delete_index(self) -> None:
+        """Drop the ChromaDB collection."""
+        delete_collection(client=self._client)
+
+    def get_stats(self) -> dict:
+        """Return collection stats."""
+        return get_collection_stats(self._collection)
+
+
+def get_indexer() -> "_ChromaDBIndexer | AzureAISearchIndexer":
+    """
+    Return the configured vector-store indexer.
+
+    Controlled by the ``VECTOR_BACKEND`` environment variable:
+
+    ``chroma`` (default)
+        Local ChromaDB — zero infrastructure, ideal for development and demos.
+    ``azure_ai_search``
+        Azure AI Search — managed, enterprise-grade, native hybrid search.
+        Requires ``AZURE_SEARCH_ENDPOINT``, ``AZURE_SEARCH_KEY``, and
+        optionally ``AZURE_SEARCH_INDEX_NAME`` and ``AZURE_SEARCH_VECTOR_DIMS``.
+    """
+    if VECTOR_BACKEND == "azure_ai_search":
+        logger.info("VECTOR_BACKEND=azure_ai_search — using AzureAISearchIndexer.")
+        return AzureAISearchIndexer()
+    logger.info("VECTOR_BACKEND=chroma — using ChromaDB.")
+    return _ChromaDBIndexer()
+
+
 # ── CLI smoke-test ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

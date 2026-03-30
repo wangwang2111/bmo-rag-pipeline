@@ -1,6 +1,8 @@
 # BMO RAG Pipeline
 
-A production-grade **Azure ETL & Retrieval-Augmented Search (RAG)** pipeline that extracts documents from Azure Blob Storage, chunks and embeds them, stores them in ChromaDB, and serves hybrid search (BM25 + vector + semantic reranking).
+A production-grade **Azure ETL & Retrieval-Augmented Search (RAG)** pipeline that extracts documents from Azure Blob Storage, chunks and embeds them, stores them in a vector store, and serves hybrid search (BM25 + vector + semantic reranking).
+
+The default vector backend is **ChromaDB** (local, zero infrastructure). Set `VECTOR_BACKEND=azure_ai_search` to switch to **Azure AI Search**, which provides native hybrid search, RRF fusion, and semantic reranking in a single managed service call.
 
 ## Table of Contents
 
@@ -55,7 +57,7 @@ bmo_1st_project/
 │   ├── extract.py     # Azure Blob → DocumentRecord (PDF/MD/TXT)
 │   ├── chunk.py       # DocumentRecord → ChunkRecord list
 │   ├── embed.py       # ChunkRecord → EmbeddedChunk (with vectors)
-│   ├── index.py       # EmbeddedChunk → ChromaDB
+│   ├── index.py       # EmbeddedChunk → vector store (ChromaDB or Azure AI Search)
 │   ├── ingest.py      # Orchestration: extract→chunk→embed→index
 │   └── search.py      # Hybrid search: BM25+vector+rerank
 ├── notebooks/
@@ -125,12 +127,22 @@ Optional variables (have sensible defaults):
 
 | Variable | Default | Description |
 |---|---|---|
-| `CHROMA_PERSIST_DIR` | `./chroma_db` | Path for ChromaDB storage |
+| `VECTOR_BACKEND` | `chroma` | Vector store backend: `chroma` or `azure_ai_search` |
+| `CHROMA_PERSIST_DIR` | `./chroma_db` | Path for ChromaDB storage (used when `VECTOR_BACKEND=chroma`) |
 | `CHUNK_SIZE` | `512` | Token chunk size |
 | `CHUNK_OVERLAP` | `50` | Token overlap between chunks |
 | `TOP_N_RESULTS` | `5` | Default search result count |
 | `EMBEDDING_BATCH_SIZE` | `32` | Embedding API batch size |
 | `LOG_LEVEL` | `INFO` | Python logging level |
+
+Azure AI Search variables (required when `VECTOR_BACKEND=azure_ai_search`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZURE_SEARCH_ENDPOINT` | | `https://<service>.search.windows.net` |
+| `AZURE_SEARCH_KEY` | | Admin API key |
+| `AZURE_SEARCH_INDEX_NAME` | `bmo-rag-chunks` | Index name |
+| `AZURE_SEARCH_VECTOR_DIMS` | `1536` | Embedding dimensions (`384` for local fallback) |
 
 ### 4. Verify installation
 
@@ -211,10 +223,11 @@ query_vec = get_query_embedding("my search query")
 ### `index.py`
 
 ```python
-from index import get_or_create_collection, index_chunks
+from index import get_indexer
 
-collection = get_or_create_collection()
-index_chunks(embedded, collection=collection)
+# Uses VECTOR_BACKEND env var to select ChromaDB or Azure AI Search
+indexer = get_indexer()
+stats = indexer.index_chunks(embedded)
 ```
 
 ### `search.py`
@@ -264,8 +277,8 @@ The one persistent miss ("steps to contain a ransomware breach") is a known mult
 1. **Container structure**: Documents are organised in subfolders (`manuals/`, `troubleshooting/`, `policies/`) but the pipeline processes all blobs regardless of folder.
 2. **Language**: All documents are English (Tesseract OCR configured for `eng`).
 3. **PDF scan detection**: A page with fewer than 50 characters (on average) is considered scanned. This threshold works well for technical documents but may need tuning for dense tables.
-4. **Embedding dimensions**: Azure OpenAI `text-embedding-3-small` produces 1536-dim vectors; the local fallback produces 384-dim vectors. The two cannot be mixed in the same ChromaDB collection. If switching embedding models, run `python src/ingest.py --reset`.
-5. **BM25 index is in-memory**: The BM25 index is rebuilt from ChromaDB on each process start. For large collections (>100K chunks), this should be replaced with a dedicated search backend.
+4. **Embedding dimensions**: Azure OpenAI `text-embedding-3-small` produces 1536-dim vectors; the local fallback produces 384-dim vectors. The two cannot be mixed in the same index. If switching embedding models, run `python src/ingest.py --reset`. When using Azure AI Search, also set `AZURE_SEARCH_VECTOR_DIMS` to match the model.
+5. **BM25 index is in-memory**: When using the ChromaDB backend, the BM25 index is rebuilt from the collection on each process start. For large collections (>100K chunks), switch to `VECTOR_BACKEND=azure_ai_search`, which provides a managed keyword index with no cold-start cost.
 
 ## Known Limitations
 

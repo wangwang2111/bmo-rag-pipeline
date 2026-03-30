@@ -3,7 +3,7 @@ ingest.py
 =========
 Orchestration script for the full ETL pipeline:
 
-    Azure Blob Storage → extract → chunk → embed → ChromaDB
+    Azure Blob Storage → extract → chunk → embed → vector store
 
 Running this script end-to-end (re-)indexes all documents in the configured
 container.  It is idempotent: re-running it will upsert existing chunks
@@ -42,13 +42,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from chunk import ChunkRecord, chunk_documents
 from embed import EmbeddedChunk, embed_chunks, _build_embedder
 from extract import DocumentRecord, extract_all_documents, _build_container_client
-from index import (
-    delete_collection,
-    get_chroma_client,
-    get_collection_stats,
-    get_or_create_collection,
-    index_chunks,
-)
+from index import get_indexer
 
 load_dotenv()
 
@@ -139,24 +133,30 @@ def stage_embed(chunks: list[ChunkRecord]) -> list[EmbeddedChunk]:
     return embedded
 
 
-def stage_index(embedded: list[EmbeddedChunk]) -> dict:
+def stage_index(embedded: list[EmbeddedChunk], reset: bool = False) -> dict:
     """
-    Stage 4: Upsert embedded chunks into ChromaDB.
+    Stage 4: Upsert embedded chunks into the configured vector store.
+
+    The backend is selected by the ``VECTOR_BACKEND`` environment variable
+    (``chroma`` by default, or ``azure_ai_search``).
 
     Parameters
     ----------
     embedded:
         Embedded chunks to persist.
+    reset:
+        If ``True``, drop the existing index before uploading.
 
     Returns
     -------
-    Statistics dict from :func:`get_collection_stats`.
+    Statistics dict (keys vary by backend but always include ``total_chunks``).
     """
     logger.info("=== STAGE 4: INDEX ===")
-    client = get_chroma_client()
-    collection = get_or_create_collection(client=client)
-    index_chunks(embedded, collection=collection)
-    stats = get_collection_stats(collection)
+    indexer = get_indexer()
+    if reset:
+        logger.warning("RESET requested — dropping existing index.")
+        indexer.delete_index()
+    stats = indexer.index_chunks(embedded)
     logger.info("Index stats: %s", stats)
     return stats
 
@@ -178,7 +178,7 @@ def run_pipeline(
     strategy:
         Chunking strategy: ``'sentence'`` or ``'semantic'``.
     reset:
-        If ``True``, drop the existing ChromaDB collection before indexing.
+        If ``True``, drop the existing index before indexing.
 
     Returns
     -------
@@ -191,10 +191,6 @@ def run_pipeline(
         "reset": reset,
         "stages": {},
     }
-
-    if reset:
-        logger.warning("RESET requested — dropping existing collection.")
-        delete_collection()
 
     # ── Stage 1: Extract ──────────────────────────────────────────────────────
     t0 = time.perf_counter()
@@ -231,7 +227,7 @@ def run_pipeline(
 
     # ── Stage 4: Index ────────────────────────────────────────────────────────
     t0 = time.perf_counter()
-    stats = stage_index(embedded)
+    stats = stage_index(embedded, reset=reset)
     summary["stages"]["index"] = {
         **stats,
         "duration_s": round(time.perf_counter() - t0, 2),
@@ -281,7 +277,7 @@ Examples:
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Drop the existing ChromaDB collection before indexing.",
+        help="Drop the existing index before indexing (works with both backends).",
     )
     return parser.parse_args()
 
