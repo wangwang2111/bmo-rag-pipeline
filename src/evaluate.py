@@ -148,7 +148,7 @@ def generate_answer(
     contexts:
         Retrieved chunk texts, ordered by rank.
     deployment:
-        Azure OpenAI chat deployment name (e.g. ``gpt-4o``, ``gpt-35-turbo``).
+        Azure OpenAI chat deployment name (e.g. ``gpt-5-chat``, ``gpt-4o``).
         Defaults to the ``AZURE_OPENAI_CHAT_DEPLOYMENT`` env var.
     max_tokens:
         Maximum tokens in the generated answer.
