@@ -162,10 +162,12 @@ def generate_answer(
     except ImportError as exc:
         raise ImportError("pip install openai>=1.10.0") from exc
 
+    # Chat model may live on a different Azure resource than the embedding model.
+    # Fall back to the main embedding resource vars if chat-specific ones are unset.
     client = AzureOpenAI(
-        api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+        api_key=os.environ.get("AZURE_OPENAI_CHAT_API_KEY") or os.environ["AZURE_OPENAI_API_KEY"],
+        azure_endpoint=os.environ.get("AZURE_OPENAI_CHAT_ENDPOINT") or os.environ["AZURE_OPENAI_ENDPOINT"],
+        api_version=os.getenv("AZURE_OPENAI_CHAT_API_VERSION") or os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
     )
     chat_deployment = deployment or os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"]
 
@@ -267,10 +269,13 @@ def _configure_ragas_for_azure() -> None:
 
     Required env vars
     -----------------
-    AZURE_OPENAI_CHAT_DEPLOYMENT   Chat model deployment (e.g. gpt-4o)
-    AZURE_OPENAI_ENDPOINT          Azure OpenAI resource endpoint
-    AZURE_OPENAI_API_KEY           API key
-    AZURE_OPENAI_DEPLOYMENT_NAME   Embedding deployment (for answer relevancy)
+    AZURE_OPENAI_CHAT_DEPLOYMENT     Chat model deployment (e.g. gpt-4o)
+    AZURE_OPENAI_CHAT_ENDPOINT       Chat resource endpoint (falls back to AZURE_OPENAI_ENDPOINT)
+    AZURE_OPENAI_CHAT_API_KEY        Chat resource key (falls back to AZURE_OPENAI_API_KEY)
+    AZURE_OPENAI_CHAT_API_VERSION    API version for chat (falls back to AZURE_OPENAI_API_VERSION)
+    AZURE_OPENAI_ENDPOINT            Embedding resource endpoint
+    AZURE_OPENAI_API_KEY             Embedding resource key
+    AZURE_OPENAI_DEPLOYMENT_NAME     Embedding deployment (for answer relevancy scoring)
     """
     try:
         from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
@@ -281,26 +286,31 @@ def _configure_ragas_for_azure() -> None:
             "pip install langchain-openai==0.1.8 ragas==0.1.21"
         ) from exc
 
-    endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
-    api_key    = os.environ["AZURE_OPENAI_API_KEY"]
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
-    chat_deploy  = os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"]
-    embed_deploy = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "text-embedding-3-small")
+    # Chat model may live on a different Azure resource than the embedding model.
+    chat_endpoint   = os.environ.get("AZURE_OPENAI_CHAT_ENDPOINT") or os.environ["AZURE_OPENAI_ENDPOINT"]
+    chat_api_key    = os.environ.get("AZURE_OPENAI_CHAT_API_KEY")  or os.environ["AZURE_OPENAI_API_KEY"]
+    chat_api_version = os.getenv("AZURE_OPENAI_CHAT_API_VERSION")  or os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    chat_deploy     = os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"]
+
+    embed_endpoint  = os.environ["AZURE_OPENAI_ENDPOINT"]
+    embed_api_key   = os.environ["AZURE_OPENAI_API_KEY"]
+    embed_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    embed_deploy    = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "text-embedding-3-small")
 
     ragas_llm = LangchainLLMWrapper(
         AzureChatOpenAI(
             azure_deployment=chat_deploy,
-            azure_endpoint=endpoint,
-            api_key=api_key,
-            api_version=api_version,
+            azure_endpoint=chat_endpoint,
+            api_key=chat_api_key,
+            api_version=chat_api_version,
             temperature=0,
         )
     )
     ragas_embeddings = AzureOpenAIEmbeddings(
         azure_deployment=embed_deploy,
-        azure_endpoint=endpoint,
-        api_key=api_key,
-        api_version=api_version,
+        azure_endpoint=embed_endpoint,
+        api_key=embed_api_key,
+        api_version=embed_api_version,
     )
 
     # Inject into each metric that uses an LLM or embeddings
