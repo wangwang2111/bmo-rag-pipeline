@@ -247,7 +247,7 @@ Cross-encoder reranking is the dominant bottleneck. For sub-50ms production late
 
 ### Retrieval accuracy: Recall@K
 
-Evaluated on 21 ground-truth queries spanning 4 query types across all 10 documents.
+Evaluated on 20 ground-truth queries spanning 4 query types across all 10 documents.
 
 | | Recall@1 | Recall@3 | Recall@5 |
 |---|---|---|---|
