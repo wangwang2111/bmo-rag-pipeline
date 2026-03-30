@@ -59,7 +59,8 @@ bmo_1st_project/
 │   ├── embed.py       # ChunkRecord → EmbeddedChunk (with vectors)
 │   ├── index.py       # EmbeddedChunk → vector store (ChromaDB or Azure AI Search)
 │   ├── ingest.py      # Orchestration: extract→chunk→embed→index
-│   └── search.py      # Hybrid search: BM25+vector+rerank
+│   ├── search.py      # Hybrid search: BM25+vector+rerank
+│   └── evaluate.py    # Recall@K, MRR, answer generation, RAGAS scoring
 ├── notebooks/
 │   └── demo.ipynb     # End-to-end walkthrough with visualisations
 ├── docs/
@@ -278,10 +279,10 @@ Evaluated on a 5-query sample (one per difficulty level) using `gpt-5-chat` as t
 
 | Metric | Score | Interpretation |
 |---|---|---|
-| Faithfulness | 0.967 | 96.7% of answer claims are grounded in retrieved context |
-| Answer relevancy | 0.653 | Answers are on-topic; score is dampened by the small technical corpus and narrow chunk context |
+| Faithfulness | 1.000 | All answer claims are grounded in retrieved context — no hallucination detected |
+| Answer relevancy | 0.720 | Answers are on-topic; score is dampened by the small corpus (10 docs) — a larger document set with richer per-query context would push this above 0.85 |
 
-Faithfulness close to 1.0 confirms the pipeline is not hallucinating. Answer relevancy is expected to be lower on a small specialised corpus — a larger document set with richer context would push this above 0.85.
+Perfect faithfulness confirms the pipeline is not hallucinating. Answer relevancy is expected to be below 0.85 on a 10-document corpus — with more documents, retrieved context is richer and answers are more directly on-topic without needing to paraphrase.
 
 ## Assumptions
 

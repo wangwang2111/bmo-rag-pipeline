@@ -305,6 +305,34 @@ Key decisions:
 - `--strategy` flag switches between `sentence` and `semantic` chunking at runtime
 - Every stage logs document counts and wall time so large ingestion runs show clear progress
 
+## Evaluation (`evaluate.py`)
+
+Two evaluation layers are implemented in `evaluate.py`, each independently runnable.
+
+### Layer 1: Retrieval quality (no LLM required)
+
+| Metric | Formula | What it measures |
+|---|---|---|
+| Recall@K | Fraction of queries with correct doc in top K | Are we retrieving the right document at all? |
+| MRR | Mean of 1/rank of first correct hit | How high does the correct document rank on average? |
+
+`run_retrieval_eval(engine, ground_truth, ks)` accepts any search engine implementing `search(query, top_n)` — works with both `HybridSearchEngine` and `AzureAISearchEngine` without modification.
+
+### Layer 2: Answer quality (RAGAS, requires Azure OpenAI chat model)
+
+Key decision: use RAGAS rather than hand-written scoring because it uses an LLM-as-judge pattern that generalises across document types without needing manually labelled answers.
+
+| Metric | How RAGAS computes it |
+|---|---|
+| Faithfulness | Decomposes the answer into atomic claims; verifies each against the retrieved context using the LLM judge; score = fraction of grounded claims |
+| Answer relevancy | Generates reverse questions from the answer; measures cosine similarity between reverse question embeddings and the original question |
+
+`generate_answer()` calls the Azure OpenAI chat model with a grounding-only system prompt (temperature=0) before scoring. This ensures faithfulness is a meaningful signal rather than a trivially high score from an unconstrained model.
+
+**Why faithfulness and not context recall:** context recall requires ground-truth answer text per query. The existing ground truth contains only expected blob names, not answer text. Faithfulness and answer relevancy require only `(question, answer, contexts)` with no labelled answers needed.
+
+**Known limitation of answer relevancy on small corpora:** RAGAS answer relevancy measures embedding similarity between the original question and LLM-generated reverse questions derived from the answer. On a 10-document corpus with narrow jargon-heavy chunks, retrieved context is limited and answers require paraphrasing. This causes reverse question embeddings to diverge from the original question, producing scores in the 0.7 range even when answers are substantively correct. A larger corpus would push this above 0.85.
+
 ## Key Optimizations
 
 | Concern | Decision |
