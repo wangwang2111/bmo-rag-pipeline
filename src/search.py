@@ -605,9 +605,195 @@ class HybridSearchEngine:
         return results
 
 
+# ── Azure AI Search engine ────────────────────────────────────────────────────
+
+class AzureAISearchEngine:
+    """
+    Hybrid search engine backed by Azure AI Search.
+
+    Replaces the manual four-layer pipeline (BM25 index, vector search,
+    RRF fusion, cross-encoder reranking) with a single Azure AI Search API
+    call that performs all of these natively:
+
+    - BM25 keyword search over the ``text`` field (``en.lucene`` analyser)
+    - Vector search over the ``embedding`` field (HNSW, cosine)
+    - RRF fusion of BM25 + vector scores
+    - Semantic reranking (L2 model hosted by the service)
+    - Extractive captions returned in ``@search.captions``
+
+    The ``SearchResult`` dataclass is identical to ``HybridSearchEngine``
+    output, so the notebook and downstream code work unchanged.
+    ``bm25_rank`` and ``vector_rank`` are ``None`` because Azure AI Search
+    does not expose per-signal ranks in the response.
+
+    Required env vars
+    -----------------
+    AZURE_SEARCH_ENDPOINT    e.g. https://<service>.search.windows.net
+    AZURE_SEARCH_KEY         Admin API key
+    AZURE_SEARCH_INDEX_NAME  Index name (default: bmo-rag-chunks)
+    """
+
+    def __init__(self, top_n: int = TOP_N_RESULTS) -> None:
+        try:
+            from azure.core.credentials import AzureKeyCredential
+            from azure.search.documents import SearchClient
+        except ImportError as exc:
+            raise ImportError(
+                "pip install azure-search-documents>=11.4.0"
+            ) from exc
+
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+
+        endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
+        key = os.environ["AZURE_SEARCH_KEY"]
+        index_name = os.getenv("AZURE_SEARCH_INDEX_NAME", "bmo-rag-chunks")
+
+        self.top_n = top_n
+        self._search_client = SearchClient(endpoint, index_name, AzureKeyCredential(key))
+        self._embedder = None
+        self.last_latency_ms: dict[str, float] = {}
+        logger.debug("AzureAISearchEngine ready (index=%s).", index_name)
+
+    def search(
+        self,
+        query: str,
+        top_n: Optional[int] = None,
+        filter_metadata: Optional[dict] = None,
+    ) -> list[SearchResult]:
+        """
+        Run hybrid search via a single Azure AI Search call.
+
+        Azure AI Search performs BM25 + vector search + RRF + semantic
+        reranking internally.  ``filter_metadata`` keys must match indexed
+        field names and are translated to an OData filter string.
+
+        Parameters
+        ----------
+        query:
+            Natural language search query.
+        top_n:
+            Number of results to return (overrides instance default).
+        filter_metadata:
+            Optional dict of field:value pairs to filter results, e.g.
+            ``{"source_type": "pdf_digital"}``.
+
+        Returns
+        -------
+        Ranked list of ``SearchResult`` objects.
+        """
+        from azure.search.documents.models import VectorizedQuery
+
+        n = top_n or self.top_n
+
+        if self._embedder is None:
+            self._embedder = _build_embedder()
+
+        t_total = time.perf_counter()
+
+        # ── Embed query ───────────────────────────────────────────────────────
+        t0 = time.perf_counter()
+        query_vec = get_query_embedding(query, embedder=self._embedder)
+        t_embed = (time.perf_counter() - t0) * 1000
+
+        # ── Build OData filter ────────────────────────────────────────────────
+        odata_filter: Optional[str] = None
+        if filter_metadata:
+            parts = [
+                f"{k} eq '{v}'" if isinstance(v, str) else f"{k} eq {v}"
+                for k, v in filter_metadata.items()
+            ]
+            odata_filter = " and ".join(parts)
+
+        # ── Single hybrid search call ─────────────────────────────────────────
+        t0 = time.perf_counter()
+        raw = self._search_client.search(
+            search_text=query,
+            vector_queries=[
+                VectorizedQuery(
+                    vector=query_vec,
+                    k_nearest_neighbors=50,
+                    fields="embedding",
+                )
+            ],
+            query_type="semantic",
+            semantic_configuration_name="bmo-semantic",
+            query_caption="extractive",
+            top=n,
+            filter=odata_filter,
+        )
+        t_search = (time.perf_counter() - t0) * 1000
+
+        # ── Map to SearchResult ───────────────────────────────────────────────
+        results: list[SearchResult] = []
+        for rank_pos, r in enumerate(raw, start=1):
+            captions = r.get("@search.captions") or []
+            caption = captions[0].text if captions else ""
+
+            reranker_score = r.get("@search.reranker_score")
+            score = (
+                float(reranker_score)
+                if reranker_score is not None
+                else float(r.get("@search.score", 0.0))
+            )
+
+            results.append(
+                SearchResult(
+                    rank=rank_pos,
+                    chunk_id=r.get("chunk_id", ""),
+                    blob_name=r.get("blob_name", ""),
+                    text=r.get("text", ""),
+                    score=score,
+                    rrf_score=float(r.get("@search.score", 0.0)),
+                    bm25_rank=None,    # not exposed by Azure AI Search
+                    vector_rank=None,  # not exposed by Azure AI Search
+                    caption=caption,
+                    metadata={k: v for k, v in r.items()
+                               if not k.startswith("@search.")},
+                )
+            )
+
+        t_total_ms = (time.perf_counter() - t_total) * 1000
+        self.last_latency_ms = {
+            "embed":  round(t_embed, 1),
+            "search": round(t_search, 1),
+            "total":  round(t_total_ms, 1),
+        }
+        logger.info(
+            "Azure AI Search latency (ms) — embed: %.1f | search: %.1f | total: %.1f",
+            t_embed, t_search, t_total_ms,
+        )
+        return results
+
+
+# ── Engine factory ────────────────────────────────────────────────────────────
+
+def get_search_engine(
+    top_n: int = TOP_N_RESULTS,
+) -> "HybridSearchEngine | AzureAISearchEngine":
+    """
+    Return the configured search engine.
+
+    Controlled by the ``VECTOR_BACKEND`` environment variable:
+
+    ``chroma`` (default)
+        ``HybridSearchEngine`` — manual BM25 + RRF + cross-encoder reranking
+        over a local ChromaDB collection.
+    ``azure_ai_search``
+        ``AzureAISearchEngine`` — native hybrid search + semantic reranking
+        via a single Azure AI Search call.
+    """
+    backend = os.getenv("VECTOR_BACKEND", "chroma").lower()
+    if backend == "azure_ai_search":
+        logger.info("VECTOR_BACKEND=azure_ai_search — using AzureAISearchEngine.")
+        return AzureAISearchEngine(top_n=top_n)
+    logger.info("VECTOR_BACKEND=chroma — using HybridSearchEngine.")
+    return HybridSearchEngine(top_n=top_n)
+
+
 # ── Module-level convenience function ────────────────────────────────────────
 
-_default_engine: Optional[HybridSearchEngine] = None
+_default_engine: Optional["HybridSearchEngine | AzureAISearchEngine"] = None
 
 
 def search(
@@ -616,10 +802,10 @@ def search(
     filter_metadata: Optional[dict] = None,
 ) -> list[SearchResult]:
     """
-    Module-level convenience wrapper around ``HybridSearchEngine``.
+    Module-level convenience wrapper around the configured search engine.
 
-    Uses a lazily initialised singleton engine so the BM25 index and model
-    weights are loaded only once per process.
+    Uses a lazily initialised singleton engine (selected by ``VECTOR_BACKEND``)
+    so model weights and indexes are loaded only once per process.
 
     Parameters
     ----------
@@ -628,7 +814,7 @@ def search(
     top_n:
         Number of results.
     filter_metadata:
-        Optional ChromaDB ``where`` filter dict.
+        Optional filter dict (field:value pairs).
 
     Returns
     -------
@@ -636,7 +822,7 @@ def search(
     """
     global _default_engine
     if _default_engine is None:
-        _default_engine = HybridSearchEngine(top_n=top_n)
+        _default_engine = get_search_engine(top_n=top_n)
     return _default_engine.search(query, top_n=top_n, filter_metadata=filter_metadata)
 
 

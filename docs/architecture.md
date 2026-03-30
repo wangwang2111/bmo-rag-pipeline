@@ -184,6 +184,29 @@ ChromaDB was chosen over the alternatives because it requires zero infrastructur
 
 For a production BMO deployment, **Azure AI Search** is the natural replacement: it natively supports hybrid search, integrated semantic reranking, and operates within the same Azure tenant with no data leaving the boundary.
 
+### Enabling Azure AI Search as optional backend
+
+Set `VECTOR_BACKEND=azure_ai_search` to replace ChromaDB, the manual BM25 index, RRF fusion, and the cross-encoder reranker with a single Azure AI Search service.
+
+| Env var | Description |
+|---|---|
+| `AZURE_SEARCH_ENDPOINT` | `https://<service>.search.windows.net` |
+| `AZURE_SEARCH_KEY` | Admin API key |
+| `AZURE_SEARCH_INDEX_NAME` | Index name (default: `bmo-rag-chunks`) |
+| `AZURE_SEARCH_VECTOR_DIMS` | `1536` for Azure OpenAI, `384` for local fallback |
+
+Key decision: Azure AI Search is selected as the backend via the `VECTOR_BACKEND` environment variable rather than a code change, so both backends coexist and the switch is fully reversible.
+
+When `VECTOR_BACKEND=azure_ai_search`:
+
+- `index.py` — `AzureAISearchIndexer` creates the index schema (HNSW vector field + `en.lucene` text field + semantic configuration) on first use via `create_or_update_index` (idempotent), then uploads chunks with `merge_or_upload_documents`
+- `search.py` — `AzureAISearchEngine` replaces all four manual pipeline layers with a single `search_client.search()` call using `query_type="semantic"` and a `VectorizedQuery`; BM25, vector search, RRF, and semantic reranking run inside the service
+- Semantic captions come from `@search.captions` (extractive) instead of token-overlap scoring; the local cross-encoder model is not loaded
+- `bm25_rank` and `vector_rank` in `SearchResult` are `None` because Azure AI Search does not expose per-signal ranks in the response
+- The `SearchResult` dataclass is identical for both backends, so the notebook and any downstream code work unchanged without modification
+
+**Trade-off:** Azure AI Search costs approximately $25/month at the Basic tier and requires a live Azure subscription. ChromaDB remains the default for local development and self-contained demos.
+
 ### Upsert semantics
 
 **Decision:** All writes use ChromaDB's `upsert` operation rather than `add`.
@@ -195,6 +218,8 @@ For a production BMO deployment, **Azure AI Search** is the natural replacement:
 All embedding vectors are L2-normalised before storage. For normalised vectors, cosine distance equals 1 minus dot product, making cosine and inner-product distance equivalent. ChromaDB's `hnsw:space=cosine` is set explicitly for correctness. Normalisation forces all vectors onto the surface of a unit hypersphere, so similarity is determined by direction (meaning) rather than magnitude (document length).
 
 ## Stage 5: Hybrid Search (`search.py`)
+
+The manual four-layer pipeline described below applies when `VECTOR_BACKEND=chroma` (default). When `VECTOR_BACKEND=azure_ai_search`, all four layers are replaced by a single `AzureAISearchEngine.search()` call — see "Enabling Azure AI Search as optional backend" under Stage 4.
 
 ### Why hybrid (not pure vector)?
 
