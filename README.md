@@ -22,7 +22,6 @@ The default vector backend is **ChromaDB** (local, zero infrastructure). Set `VE
 | Document | Description |
 |---|---|
 | [Architecture decisions](docs/architecture.md) | Stage-by-stage design decisions, model selection tables, trade-offs, scalability, and production migration path |
-| [Cost estimation](docs/cost_estimation.md) | Production cost breakdown across three scale scenarios and optimisation strategies |
 | [Microsoft Fabric architecture](docs/fabric_architecture.md) | How to migrate this pipeline to Microsoft Fabric and Azure AI Search for a production BMO deployment |
 
 ## Architecture
@@ -66,7 +65,6 @@ bmo_1st_project/
 ├── docs/
 │   ├── README.md      # This file
 │   ├── architecture.md
-│   ├── cost_estimation.md
 │   └── fabric_architecture.md
 ├── sample_data/       # Synthetic test documents (mirrors Azure container layout)
 │   ├── manuals/       #   deviceA.pdf, deviceB.pdf, deviceC_scanned.pdf, deviceD.pdf
