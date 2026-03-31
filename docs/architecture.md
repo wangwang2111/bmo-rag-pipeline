@@ -52,7 +52,7 @@ Chunks are embedded in batches of 32 (configurable via `EMBEDDING_BATCH_SIZE`) t
 
 ## Stage 4: Indexing
 
-Default backend is ChromaDB — zero infrastructure, embedded in-process, simple API. The right choice for a self-contained demo.
+Default backend is ChromaDB, zero infrastructure, embedded in-process, simple API. The right choice for a self-contained demo.
 
 For a real BMO deployment the swap is `VECTOR_BACKEND=azure_ai_search`. Azure AI Search is native to the Azure tenant, handles BM25 + vector + RRF + semantic reranking in a single managed call, and scales to billions of vectors. Setting it up requires an active search service and the four env vars below:
 
