@@ -22,6 +22,7 @@ The default vector backend is **ChromaDB** (local, zero infrastructure). Set `VE
 | Document | Description |
 |---|---|
 | [Architecture decisions](docs/architecture.md) | Stage-by-stage design decisions, model selection tables, trade-offs, scalability, and production migration path |
+| [Scaling to 1k-2k documents](docs/scaling_1k_2k.md) | What changes at 1,000-2,000 documents, cheapest production path, and when to upgrade |
 | [Microsoft Fabric architecture](docs/fabric_architecture.md) | How to migrate this pipeline to Microsoft Fabric and Azure AI Search for a production BMO deployment |
 
 ## Architecture
